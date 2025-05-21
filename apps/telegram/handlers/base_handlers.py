@@ -1,11 +1,13 @@
 from typing import Optional
-from apps.bot.telegram_models import Update, Chat, User
+from apps.telegram.telegram_models import Update, Chat, User
+from apps.telegram.telegram import Telegram
 from utils.logger import logger
 
 
 class BaseHandler:
-    def __init__(self, update: Update):
-        self.update: Update = update
+    def __init__(self, update: Update, bot: Telegram):
+        self.update = update
+        self.bot = bot
 
     @property
     def chat(self) -> Optional[Chat]:

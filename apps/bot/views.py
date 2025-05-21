@@ -3,8 +3,8 @@ import traceback
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from apps.bot.dispatcher import Dispatcher
-from apps.bot.telegram_models import Update
+from apps.telegram.dispatcher import Dispatcher
+from apps.telegram.telegram_models import Update
 
 
 class TelegramWebhookView(APIView):
