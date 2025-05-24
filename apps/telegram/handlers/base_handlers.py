@@ -78,11 +78,17 @@ class BaseHandler:
         return UserDb.objects.filter(user_id=self.user_id)
 
     @cached_property
-    def user_obj(self):
+    def user_obj(self) -> UserDb:
         """
         Returns the first user object from the user QuerySet.
         """
         return self.user_qs.first()
+    @property
+    def user_step(self):
+        """
+        Returns the current user step from the database.
+        """
+        return self.user_obj.step
 
     @property
     def user_id(self) -> Optional[int]:
