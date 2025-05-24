@@ -139,3 +139,23 @@ FORCE_SCRIPT_NAME=/blind/
 | Key                 | Description                                                                 |
 |---------------------|-----------------------------------------------------------------------------|
 | `FORCE_SCRIPT_NAME` | Used when deploying the project under a sub-path (e.g., $/blind/$).         |
+
+---
+
+# 🚀 How to Run the Project
+
+To run the Django project using [**uv**](https://github.com/astral-sh/uv), follow these steps:
+
+```bash
+uv run manage.py makemigrations
+uv run manage.py migrate
+uv run manage.py runserver
+```
+
+### 📝 Explanation
+
+| Command                           | Description                                              |
+|-----------------------------------|----------------------------------------------------------|
+| `uv run manage.py makemigrations` | Detect changes in models and prepare migration files.    |
+| `uv run manage.py migrate`        | Apply migrations to the database.                        |
+| `uv run manage.py runserver`      | Start the Django development server.                     |
