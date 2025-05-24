@@ -11,3 +11,4 @@ wheels/
 .vscode
 *.db
 *db.sqlite3
+.env.ini
