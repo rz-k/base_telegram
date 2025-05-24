@@ -2,17 +2,28 @@ from typing import Optional
 from apps.telegram.telegram_models import Update, Chat, User
 from apps.telegram.telegram import Telegram
 from utils.logger import logger
+from django.utils.functional import cached_property
 from django.contrib.auth import get_user_model
 UserDb = get_user_model()
 
-
 class BaseHandler:
+    """
+    Base handler class that provides common utilities for processing Telegram updates,
+    such as accessing user, chat, and message details.
+    """
+
     def __init__(self, update: Update, bot: Telegram):
+        """
+        Initializes the handler with the incoming update and bot instance.
+        """
         self.update = update
         self.bot = bot
 
     @property
     def chat(self) -> Optional[Chat]:
+        """
+        Returns the chat object from the update, if available.
+        """
         if self.update.message:
             return self.update.message.chat
         if self.update.callback_query:
@@ -20,7 +31,10 @@ class BaseHandler:
         return None
 
     @property
-    def user(self) -> Optional[User]:        
+    def user(self) -> Optional[User]:
+        """
+        Returns the user object who sent the update, if available.
+        """
         if self.update.message:
             return self.update.message.from_user
         if self.update.callback_query:
@@ -31,16 +45,17 @@ class BaseHandler:
 
     @property
     def chat_id(self) -> Optional[int]:
+        """
+        Returns the chat ID, if the chat exists.
+        """
         return self.chat.id if self.chat else None
 
     def create_user(self, **kwargs):
         """
-        This method checks if the user object exists in the DB or not.
-        If the user not exist, then add them to the DB.
-        Sets the `user_qs` and `user_obj` as global variables.
-        If the user is new, then call the `check_referral_user` method.
+        Ensures the Telegram user is stored in the database.
+        If the user does not exist, creates a new one.
         """
-        self.qs = UserDb.objects.filter(user_id=self.user_id)        
+        self.qs = UserDb.objects.filter(user_id=self.user_id)
         if not self.qs:
             username = self.user.username
             dup_username = UserDb.objects.filter(username=username)
@@ -54,31 +69,42 @@ class BaseHandler:
                 user_id=self.user_id,
                 **kwargs
             )
-
-    @property
-    def user_qs(self):  
-        self.create_user  
+    @cached_property
+    def user_qs(self):
+        """
+        Returns the QuerySet for the current user from the database.
+        """
+        self.create_user()
         return UserDb.objects.filter(user_id=self.user_id)
-    
-    @property
+
+    @cached_property
     def user_obj(self):
+        """
+        Returns the first user object from the user QuerySet.
+        """
         return self.user_qs.first()
 
     @property
     def user_id(self) -> Optional[int]:
+        """
+        Returns the Telegram user ID, if available.
+        """
         return self.user.id if self.user else None
 
     def is_text(self) -> bool:
+        """
+        Checks whether the update is a text message.
+        """
         return bool(self.update.message and self.update.message.text)
 
     def is_command(self) -> bool:
-        return  self.update.message and self.update.message.startswith("/")        
+        """
+        Checks whether the message is a command (starts with "/").
+        """
+        return bool(self.update.message and self.update.message.text and self.update.message.text.startswith("/"))
 
     def is_photo(self) -> bool:
+        """
+        Checks whether the message contains a photo.
+        """
         return bool(self.update.message and self.update.message.photo)
-
-    def send_message(self, text: str):
-        logger.info(f"[SEND] To {self.chat_id}: {text}")
-
-    def log(self):
-        logger.info(f"[LOG] update from user={self.user_id}, chat={self.chat_id}")
