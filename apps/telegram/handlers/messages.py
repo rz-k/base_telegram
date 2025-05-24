@@ -8,6 +8,17 @@ class MessageHandler(BaseHandler):
     def __init__(self, update: Update, bot: Telegram):
         super().__init__(update, bot)
 
+        self.steps = {
+            "home": self.home
+        }
+    
+    def home(self):
+        print("Home")
 
     def handle(self):
-        print(f"Message Handlers")
+
+        if callback := self.steps.get(self.user_step): # step : "home"
+            return callback()
+
+        if callback := self.steps.get(self.user_step.split(":")[0]): # step : "home:info"
+            return callback()

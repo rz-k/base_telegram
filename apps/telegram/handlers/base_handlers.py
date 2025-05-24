@@ -4,7 +4,8 @@ from apps.telegram.telegram import Telegram
 from utils.logger import logger
 from django.utils.functional import cached_property
 from django.contrib.auth import get_user_model
-UserDb = get_user_model()
+from apps.account.models import User as UserDB
+# UserDB = get_user_model()
 
 class BaseHandler:
     """
@@ -55,13 +56,13 @@ class BaseHandler:
         Ensures the Telegram user is stored in the database.
         If the user does not exist, creates a new one.
         """
-        self.qs = UserDb.objects.filter(user_id=self.user_id)
+        self.qs = UserDB.objects.filter(user_id=self.user_id)
         if not self.qs:
-            username = self.user.username
-            dup_username = UserDb.objects.filter(username=username)
+            username = self.user_obj.username
+            dup_username = UserDB.objects.filter(username=username)
             if dup_username:
                 username = self.user_id
-            return UserDb.objects.create_user(
+            return UserDB.objects.create_user(
                 username=username,
                 password=str(self.user_id),
                 first_name=self.user.first_name,
@@ -75,10 +76,10 @@ class BaseHandler:
         Returns the QuerySet for the current user from the database.
         """
         self.create_user()
-        return UserDb.objects.filter(user_id=self.user_id)
+        return UserDB.objects.filter(user_id=self.user_id)
 
     @cached_property
-    def user_obj(self) -> UserDb:
+    def user_obj(self) -> UserDB:
         """
         Returns the first user object from the user QuerySet.
         """
