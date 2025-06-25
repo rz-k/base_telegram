@@ -1,6 +1,6 @@
 from apps.telegram.handlers.base_handlers import BaseHandler
-from apps.telegram.telegram_models import Update
 from apps.telegram.telegram import Telegram
+from apps.telegram.telegram_models import Update
 from utils.utils import update_object
 
 
@@ -15,7 +15,7 @@ class MessageHandler(BaseHandler):
             "home": self.home,
             "second_button": self.second_button
         }
-    
+
     def home(self):
         """
         Handles user interactions when the user is at the "home" step.
@@ -29,19 +29,19 @@ class MessageHandler(BaseHandler):
 
         if self.update.message.text == "دکمه اول":
             return self.bot.send_message(
-                chat_id=self.chat_id, 
-                text="دکمه اول", 
+                chat_id=self.chat_id,
+                text="دکمه اول",
                 reply_markup=self.inline_keyboard.first_keyboard()
 
             )
         elif self.update.message.text == "دکمه دوم":
             update_object(self.user_obj, step="second_button")
             return self.bot.send_message(
-                chat_id=self.chat_id, 
-                text="دکمه دوم", 
+                chat_id=self.chat_id,
+                text="دکمه دوم",
                 reply_markup=self.reply_keyboard.back_keyboard()
             )
-    
+
     def second_button(self):
         """
         Handles user interactions when the user is at the "second_button" step.
@@ -57,8 +57,8 @@ class MessageHandler(BaseHandler):
             update_object(self.user_obj, step="home")
 
             return self.bot.send_message(
-                chat_id=self.chat_id, 
-                text="Home", 
+                chat_id=self.chat_id,
+                text="Home",
                 reply_markup=self.reply_keyboard.home_keyboard(),
             )
 

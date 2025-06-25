@@ -1,12 +1,12 @@
 from typing import Optional
-from apps.telegram.telegram_models import Update, Chat, User
-from apps.telegram.telegram import Telegram
-from utils.logger import logger
+
 from django.utils.functional import cached_property
-from apps.telegram.keyboard import ReplyKeyboardMarkup
-from apps.telegram.keyboard import InlineKeyboardMarkup
-from django.contrib.auth import get_user_model
+
 from apps.account.models import User as UserDB
+from apps.telegram.keyboard import InlineKeyboardMarkup, ReplyKeyboardMarkup
+from apps.telegram.telegram import Telegram
+from apps.telegram.telegram_models import Chat, Update, User
+
 # UserDB = get_user_model()
 
 class BaseHandler:

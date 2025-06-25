@@ -1,9 +1,10 @@
 import json
-
-from typing import Dict, List, Optional, Union
-import requests
-from utils.load_env import env
 import threading
+from typing import Dict, List, Optional, Union
+
+import requests
+
+from utils.load_env import env
 
 
 class Telegram:
@@ -13,7 +14,9 @@ class Telegram:
     headers : dict = {"Cache-Control": "no-cache"}
     proxy: dict = {}
 
-    def bot(self, telegram_method, data, method='GET', input_file=None, params: dict = {}):
+    def bot(self, telegram_method, data, method='GET', input_file=None, params: dict = None):
+        if params is None:
+            params = {}
         if env.get("PROXY_SOCKS", None):
             self.proxy = {
                 "http": f'socks5h://{env.get("PROXY_SOCKS")}',
@@ -22,7 +25,7 @@ class Telegram:
         url = self.webhook_url.format(env.get("TOKEN"), telegram_method)
         try:
             if method == 'GET':
-                request = requests.get(url, params=data, proxies=self.proxy, headers=self.headers)
+                request = requests.get(url, params=data, proxies=self.proxy, headers=self.headers, timeout=30)
                 return json.loads(request.text)
             else:
                 request = requests.post(
@@ -40,46 +43,46 @@ class Telegram:
     def send_message(self: "Telegram",
         chat_id: Union[int, str],
         text: str,
-        parse_mode: Optional["ParseMode"] = "html",
-        entities: List["MessageEntity"] = None,
+        parse_mode: Optional["ParseMode"] = "html", # type: ignore  # noqa: F821
+        entities: List["MessageEntity"] = None, # type: ignore  # noqa: F821
         disable_web_page_preview: bool = None,
         disable_notification: bool = None,
         reply_to_message_id: int = None,
-        schedule_date: "datetime" = None,
+        schedule_date: "datetime" = None,  # noqa: F821 # type: ignore
         protect_content: bool = None,
         reply_markup: Union[
-            "InlineKeyboardMarkup",
-            "ReplyKeyboardMarkup",
-            "ReplyKeyboardRemove",
-            "ForceReply"
+            "InlineKeyboardMarkup",  # noqa: F821 # type: ignore
+            "ReplyKeyboardMarkup",  # noqa: F821 # type: ignore
+            "ReplyKeyboardRemove",  # noqa: F821 # type: ignore
+            "ForceReply"  # noqa: F821 # type: ignore
         ] = None
     ):
         """
         This Method for sending a message in telegram.
-        
+
           Parameters:
             chat_id (``int`` | ``str``):
-                Unique identifier (int) or username (str) of the target chat.                
+                Unique identifier (int) or username (str) of the target chat.
 
             text (``str``):
                 Text of the message to be sent.
 
-            parse_mode (`str`, *optional*): 
+            parse_mode (`str`, *optional*):
                By default, texts are parsed as HTML styles.
 
-            entities (`list`, *optional*): 
+            entities (`list`, *optional*):
                 List of special entities that appear in message text.
 
             disable_web_page_preview (`bool`, *optional*):
                 Disables link previews for links in this message.
-            
+
             disable_notification (`bool`, *optional*):
                 Sends the message silently.
                 Users will receive a notification with no sound.
 
             reply_to_message_id (`int`, *optional*):
                 If the message is a reply, ID of the original message.
-    
+
             schedule_date (`datetime.datetime`, *optional*):
                 Date when the message will be automatically sent.
 
@@ -109,15 +112,15 @@ class Telegram:
     def edit_message_text(self, chat_id, message_id, text, **kwargs):
         """
             This Method for sending message in telegram.
-            **kwargs : 
-                parse_mode-> Str , 
-                entities-> List , 
-                disable_web_page_preview -> Bool , 
-                disable_notification = > Bool , 
-                protect_content -> Bool , 
-                reply_to_message_id - > Int , 
-                allow_sending_without_reply -> Bool , 
-                reply_markup - > List , 
+            **kwargs :
+                parse_mode-> Str ,
+                entities-> List ,
+                disable_web_page_preview -> Bool ,
+                disable_notification = > Bool ,
+                protect_content -> Bool ,
+                reply_to_message_id - > Int ,
+                allow_sending_without_reply -> Bool ,
+                reply_markup - > List ,
         """
         data = {
             "chat_id": chat_id,
@@ -150,7 +153,7 @@ class Telegram:
         data.update(**kwargs)
         result = self.bot(telegram_method="editMessageMedia", data=data, method="POST")
         return result
-    
+
     def edit_message_caption(self, chat_id, message_id, **kwargs):
         """
             This Method for edit caption message in telegram.
@@ -175,8 +178,8 @@ class Telegram:
     def forward_message(self, chat_id, from_chat_id, message_id: int, **kwargs):
         """
         This Method for forward message in telegram.
-            **kwargs : 
-                disable_notification - > Bool , 
+            **kwargs :
+                disable_notification - > Bool ,
                 protect_content - > Bool
         """
         data = {
@@ -192,15 +195,15 @@ class Telegram:
     def copy_message(self, chat_id, from_chat_id, message_id: int, **kwargs):
         """
         This Method for Copy message in telegram.
-            **kwargs : 
-                caption -> Str , 
-                parse_mode -> Str , 
-                caption_entities -> List , 
-                disable_notification -> Bool , 
-                protect_content -> Bool , 
-                reply_to_message_id -> Int , 
-                allow_sending_without_reply -> Bool , 
-                reply_markup -> List , 
+            **kwargs :
+                caption -> Str ,
+                parse_mode -> Str ,
+                caption_entities -> List ,
+                disable_notification -> Bool ,
+                protect_content -> Bool ,
+                reply_to_message_id -> Int ,
+                allow_sending_without_reply -> Bool ,
+                reply_markup -> List ,
         """
         data = {
             "chat_id": chat_id,
@@ -215,15 +218,15 @@ class Telegram:
     def send_photo(self, chat_id, photo, **kwargs):
         """
         This Method for send_Photo in telegram.
-            **kwargs : 
-                caption -> Str , 
-                parse_mode -> Str , 
-                caption_entities -> List , 
-                disable_notification -> Bool , 
-                protect_content -> Bool , 
-                reply_to_message_id -> Int , 
-                allow_sending_without_reply -> Bool , 
-                reply_markup -> List , 
+            **kwargs :
+                caption -> Str ,
+                parse_mode -> Str ,
+                caption_entities -> List ,
+                disable_notification -> Bool ,
+                protect_content -> Bool ,
+                reply_to_message_id -> Int ,
+                allow_sending_without_reply -> Bool ,
+                reply_markup -> List ,
         """
         method = 'GET'
         file_photo=None
@@ -248,15 +251,15 @@ class Telegram:
     def send_sticker(self, chat_id, sticker, **kwargs):
         """
         This Method for sendSticker in telegram.
-            **kwargs : 
-                caption -> Str , 
-                parse_mode -> Str , 
-                caption_entities -> List , 
-                disable_notification -> Bool , 
-                protect_content -> Bool , 
-                reply_to_message_id -> Int , 
-                allow_sending_without_reply -> Bool , 
-                reply_markup -> List , 
+            **kwargs :
+                caption -> Str ,
+                parse_mode -> Str ,
+                caption_entities -> List ,
+                disable_notification -> Bool ,
+                protect_content -> Bool ,
+                reply_to_message_id -> Int ,
+                allow_sending_without_reply -> Bool ,
+                reply_markup -> List ,
         """
         method = 'GET'
         data = {
@@ -286,9 +289,7 @@ class Telegram:
         data.update(**kwargs)
         result = self.bot(telegram_method="getChatMember", data=data)
         if result['ok']:
-            if result['result']['status']=='left':
-                return False
-            return True
+            return result['result']['status'] != 'left'
         else:
             return False
 
@@ -301,20 +302,20 @@ class Telegram:
         result = self.bot(telegram_method="getChatMember", data=data)
         if result['ok']:
             return result
-        return False 
+        return False
 
     def send_audio(self, chat_id, audio, **kwargs):
         """
         This Method for send_Audio in telegram.
-            **kwargs : 
-                caption -> Str , 
-                parse_mode -> Str , 
-                caption_entities -> List , 
-                disable_notification -> Bool , 
-                protect_content -> Bool , 
-                reply_to_message_id -> Int , 
-                allow_sending_without_reply -> Bool , 
-                reply_markup -> List , 
+            **kwargs :
+                caption -> Str ,
+                parse_mode -> Str ,
+                caption_entities -> List ,
+                disable_notification -> Bool ,
+                protect_content -> Bool ,
+                reply_to_message_id -> Int ,
+                allow_sending_without_reply -> Bool ,
+                reply_markup -> List ,
                 duration -> Int ,
                 performer -> Str ,
                 title  -> Str ,
@@ -338,16 +339,16 @@ class Telegram:
     def send_document(self, chat_id, document, **kwargs):
         """
         This Method for send_Document in telegram.
-            **kwargs : 
-                caption -> Str , 
-                parse_mode -> Str , 
-                caption_entities -> List , 
+            **kwargs :
+                caption -> Str ,
+                parse_mode -> Str ,
+                caption_entities -> List ,
                 disable_content_type_detection -> Bool ,
-                disable_notification -> Bool , 
-                protect_content -> Bool , 
-                reply_to_message_id -> Int , 
-                allow_sending_without_reply -> Bool , 
-                reply_markup -> List , 
+                disable_notification -> Bool ,
+                protect_content -> Bool ,
+                reply_to_message_id -> Int ,
+                allow_sending_without_reply -> Bool ,
+                reply_markup -> List ,
         """
         method = 'POST'
         data = {
@@ -364,16 +365,16 @@ class Telegram:
     def send_video(self, chat_id, video, **kwargs):
         """
         This Method for send_Video in telegram.
-            **kwargs : 
-                caption -> Str , 
-                parse_mode -> Str , 
-                caption_entities -> List , 
+            **kwargs :
+                caption -> Str ,
+                parse_mode -> Str ,
+                caption_entities -> List ,
                 disable_content_type_detection -> Bool ,
-                disable_notification -> Bool , 
-                protect_content -> Bool , 
-                reply_to_message_id -> Int , 
-                allow_sending_without_reply -> Bool , 
-                reply_markup -> List , 
+                disable_notification -> Bool ,
+                protect_content -> Bool ,
+                reply_to_message_id -> Int ,
+                allow_sending_without_reply -> Bool ,
+                reply_markup -> List ,
                 duration -> Int ,
                 width -> Int ,
                 height -> Int ,
@@ -397,16 +398,16 @@ class Telegram:
     def send_animation(self, chat_id, animation, **kwargs):
         """
         This Method for send_Animation in telegram.
-            **kwargs : 
-                caption -> Str , 
-                parse_mode -> Str , 
-                caption_entities -> List , 
+            **kwargs :
+                caption -> Str ,
+                parse_mode -> Str ,
+                caption_entities -> List ,
                 disable_content_type_detection -> Bool ,
-                disable_notification -> Bool , 
-                protect_content -> Bool , 
-                reply_to_message_id -> Int , 
-                allow_sending_without_reply -> Bool , 
-                reply_markup -> List , 
+                disable_notification -> Bool ,
+                protect_content -> Bool ,
+                reply_to_message_id -> Int ,
+                allow_sending_without_reply -> Bool ,
+                reply_markup -> List ,
                 duration -> Int ,
                 width -> Int ,
                 height -> Int ,
@@ -430,16 +431,16 @@ class Telegram:
     def send_voice(self, chat_id, voice, **kwargs):
         """
         This Method for send_Voice in telegram.
-            **kwargs : 
-                caption -> Str , 
-                parse_mode -> Str , 
-                caption_entities -> List , 
+            **kwargs :
+                caption -> Str ,
+                parse_mode -> Str ,
+                caption_entities -> List ,
                 disable_content_type_detection -> Bool ,
-                disable_notification -> Bool , 
-                protect_content -> Bool , 
-                reply_to_message_id -> Int , 
-                allow_sending_without_reply -> Bool , 
-                reply_markup -> List , 
+                disable_notification -> Bool ,
+                protect_content -> Bool ,
+                reply_to_message_id -> Int ,
+                allow_sending_without_reply -> Bool ,
+                reply_markup -> List ,
                 duration -> Int ,
                 thumb  -> Str & File ,
 
@@ -462,12 +463,12 @@ class Telegram:
     def send_video_note(self, chat_id, video_note, **kwargs):
         """
         This Method for send_VideoNote in telegram.
-            **kwargs : 
-                disable_notification -> Bool , 
-                protect_content -> Bool , 
-                reply_to_message_id -> Int , 
-                allow_sending_without_reply -> Bool , 
-                reply_markup -> List , 
+            **kwargs :
+                disable_notification -> Bool ,
+                protect_content -> Bool ,
+                reply_to_message_id -> Int ,
+                allow_sending_without_reply -> Bool ,
+                reply_markup -> List ,
                 duration -> Int ,
                 thumb  -> Str & File ,
                 length -> Int
@@ -490,11 +491,11 @@ class Telegram:
     def send_media_group(self, chat_id, media: list, **kwargs):
         """
         This Method for send_MediaGroup in telegram.
-            **kwargs : 
-                disable_notification -> Bool , 
-                protect_content -> Bool , 
-                reply_to_message_id -> Int , 
-                allow_sending_without_reply -> Bool , 
+            **kwargs :
+                disable_notification -> Bool ,
+                protect_content -> Bool ,
+                reply_to_message_id -> Int ,
+                allow_sending_without_reply -> Bool ,
         """
         method = 'GET'
         if isinstance(media[0], bytes):
@@ -514,8 +515,8 @@ class Telegram:
     def send_action(self, chat_id, action="typing", **kwargs) -> Dict:
         """
         This Method for sendChatAction in telegram.
-            **kwargs : 
-                disable_notification -> Bool , 
+            **kwargs :
+                disable_notification -> Bool ,
         """
         method = 'GET'
         data = {
@@ -529,10 +530,10 @@ class Telegram:
     def send_answer_callback_query(self, callback_query_id, text: str, **kwargs):
         """
         This Method for send_AnswerCallbackQuery in telegram.
-            **kwargs : 
-                show_alert -> Bool , 
-                url -> text , 
-                cache_time -> Int , 
+            **kwargs :
+                show_alert -> Bool ,
+                url -> text ,
+                cache_time -> Int ,
         """
         method = 'GET'
 
@@ -661,32 +662,31 @@ class Telegram:
             Use this method to get information about a member of a chat.
             Returns a ChatMember object on success.
         """
-        proxy: dict = {}
-        if config.PROXY_SOCKS:
+        if env.PROXY_SOCKS:
             self.proxy = {
-                "http": f'socks5h://{config.PROXY_SOCKS}',
-                "https": f'socks5h://{config.PROXY_SOCKS}'
+                "http": f'socks5h://{env.PROXY_SOCKS}',
+                "https": f'socks5h://{env.PROXY_SOCKS}'
             }
-        url = self.webhook_url_file.format(config.TOKEN, path)
+        url = self.webhook_url_file.format(env.TOKEN, path)
         try:
-            request = requests.get(url, proxies=self.proxy, headers=self.headers)
+            request = requests.get(url, proxies=self.proxy, headers=self.headers, timeout=30)
             return request.content
-        except:
+        except:  # noqa: E722, S110
             pass
 
 
     def send_memory_file_to_user(self,chat_id ,path, method="sticker", msg_id=1):
-        from io import BytesIO
         import random
-        if config.PROXY_SOCKS:
+        from io import BytesIO
+        if env.PROXY_SOCKS:
             self.proxy = {
-                "http": f'socks5h://{config.PROXY_SOCKS}',
-                "https": f'socks5h://{config.PROXY_SOCKS}'
+                "http": f'socks5h://{env.PROXY_SOCKS}',
+                "https": f'socks5h://{env.PROXY_SOCKS}'
             }
-        url = self.webhook_url_file.format(config.TOKEN, path)
-        request = requests.get(url, proxies=self.proxy, headers=self.headers)
+        url = self.webhook_url_file.format(env.TOKEN, path)
+        request = requests.get(url, proxies=self.proxy, headers=self.headers, timeout=30)
         file_content = BytesIO(request.content)
-        file_content.name=random.randint(1,90909090).__str__()+".webp"
+        file_content.name=random.randint(1, 90909090).__str__()+".webp"  # noqa: S311
         file_content.seek(0)
 
         if method == "sticker":
@@ -781,7 +781,7 @@ class Telegram:
     def edit_message_replay_markup(self, chat_id, message_id, **kwargs):
         """
             This Method for edit media message in telegram.
-            **kwargs :                
+            **kwargs :
                 reply_markup - > List
         """
         data = {

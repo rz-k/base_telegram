@@ -1,11 +1,6 @@
-from apps.telegram.telegram_models import Update
+from apps.telegram.handlers import CallBackQueryHandler, CommandHandler, MediaHandler, MessageHandler
 from apps.telegram.telegram import Telegram
-from apps.telegram.handlers import (
-    CommandHandler,
-    MessageHandler,
-    CallBackQueryHandler,
-    MediaHandler
-)
+from apps.telegram.telegram_models import Update
 
 
 class Dispatcher:

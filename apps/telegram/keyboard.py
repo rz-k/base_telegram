@@ -31,7 +31,7 @@ class ReplyKeyboardMarkup(BaseKeyboard):
         return self.to_json(
             data=markup
         )
-    
+
     def remove_keyboard(self):
         markup = {"keyboard": []}
         return self.to_json(

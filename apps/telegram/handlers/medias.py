@@ -1,6 +1,6 @@
 from apps.telegram.handlers.base_handlers import BaseHandler
-from apps.telegram.telegram_models import Update
 from apps.telegram.telegram import Telegram
+from apps.telegram.telegram_models import Update
 
 
 class MediaHandler(BaseHandler):
@@ -10,4 +10,4 @@ class MediaHandler(BaseHandler):
 
 
     def handle(self):
-        print(f"Media Handlers")
+        print("Media Handlers")

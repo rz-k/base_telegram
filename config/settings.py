@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from utils.load_env import env
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.

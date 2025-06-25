@@ -1,6 +1,6 @@
 from apps.telegram.handlers.base_handlers import BaseHandler
-from apps.telegram.telegram_models import Update
 from apps.telegram.telegram import Telegram
+from apps.telegram.telegram_models import Update
 from utils.utils import update_object
 
 
@@ -11,7 +11,7 @@ class CommandHandler(BaseHandler):
         self.bot = bot
         self.update = update
 
-    
+
     def start_handler(self):
         """
         Handles the /start command or entry point of the bot.
@@ -27,8 +27,8 @@ class CommandHandler(BaseHandler):
         update_object(self.user_obj, step="home")
 
         return self.bot.send_message(
-            chat_id=self.chat_id, 
-            text="Home", 
+            chat_id=self.chat_id,
+            text="Home",
             reply_markup=self.reply_keyboard.home_keyboard(),
         )
 
@@ -43,4 +43,4 @@ class CommandHandler(BaseHandler):
         elif self.update.message.text.startswith("/help"):
             self.help_handler()
 
-        print(f"Command Handlers")
+        print("Command Handlers")

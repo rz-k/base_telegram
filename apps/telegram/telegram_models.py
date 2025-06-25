@@ -1,7 +1,8 @@
 from __future__ import annotations
-from typing import Optional, List,  Union, Literal
-from pydantic import BaseModel, Field
-from pydantic import ConfigDict
+
+from typing import List, Literal, Optional, Union
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class User(BaseModel):

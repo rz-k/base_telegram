@@ -1,4 +1,5 @@
 from django.urls import path
+
 from apps.bot.views import TelegramWebhookView
 
 app_name = 'bot'

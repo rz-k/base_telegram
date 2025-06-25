@@ -1,12 +1,13 @@
 import json
 import traceback
 
-from rest_framework.views import APIView
-from rest_framework.response import Response
+from rest_framework import status
 from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
 from apps.telegram.dispatcher import Dispatcher
 from apps.telegram.telegram_models import Update
-from rest_framework import status
 from utils.logger import logger
 
 
@@ -19,7 +20,7 @@ class TelegramWebhookView(APIView):
     - Constructs an `Update` object from the payload.
     - Passes the update to the `Dispatcher` to determine how it should be handled.
     - Logs any exceptions that occur during processing.
-    
+
     Returns:
         JSON response indicating success ({"ok": True}).
     """
