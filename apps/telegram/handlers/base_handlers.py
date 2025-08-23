@@ -1,3 +1,4 @@
+import threading
 from typing import Optional
 
 from django.utils.functional import cached_property
@@ -7,7 +8,6 @@ from apps.telegram.keyboard import InlineKeyboardMarkup, ReplyKeyboardMarkup
 from apps.telegram.telegram import Telegram
 from apps.telegram.telegram_models import Chat, Update, User
 
-# UserDB = get_user_model()
 
 class BaseHandler:
     """
@@ -60,34 +60,46 @@ class BaseHandler:
         Ensures the Telegram user is stored in the database.
         If the user does not exist, creates a new one.
         """
-        self.qs = UserDB.objects.filter(user_id=self.user_id)
-        if not self.qs:
-            username = self.user_obj.username
-            dup_username = UserDB.objects.filter(username=username)
-            if dup_username:
-                username = self.user_id
-            return UserDB.objects.create_user(
+        if UserDB.objects.filter(user_id=self.user_id).exists():
+            return None
+        username = self.user.username or str(self.user_id)
+
+        if UserDB.objects.filter(username=username).exists():
+            username = str(self.user_id)
+        try:
+            user = UserDB.objects.create_user(
                 username=username,
                 password=str(self.user_id),
                 first_name=self.user.first_name,
-                last_name=self.user.last_name if self.user.last_name else self.user_id,
+                last_name=self.user.last_name or str(self.user_id),
                 user_id=self.user_id,
                 **kwargs
             )
+            return user
+        except Exception as e:
+            print(e)
+            return None
+
     @cached_property
     def user_qs(self):
         """
         Returns the QuerySet for the current user from the database.
         """
-        self.create_user()
-        return UserDB.objects.filter(user_id=self.user_id)
+        if self.user:
+            if self.is_private():
+                self.create_user()
+            return UserDB.objects.filter(user_id=self.user_id)
+        return None
 
     @cached_property
     def user_obj(self) -> UserDB:
         """
         Returns the first user object from the user QuerySet.
         """
-        return self.user_qs.first()
+        if self.user_qs:
+            return self.user_qs.first()
+        return None
+
     @property
     def user_step(self):
         """
@@ -101,6 +113,18 @@ class BaseHandler:
         Returns the Telegram user ID, if available.
         """
         return self.user.id if self.user else None
+
+    @property
+    def text(self) -> str:
+        """
+        Checks whether the update is a text message.
+        """
+        if self.update.message:
+            return self.update.message.text
+        if self.update.callback_query:
+            return self.update.callback_query.message.text
+
+        return None
 
     def is_text(self) -> bool:
         """
@@ -119,3 +143,27 @@ class BaseHandler:
         Checks whether the message contains a photo.
         """
         return bool(self.update.message and self.update.message.photo)
+
+    def is_private(self) -> bool:
+        """
+        Checks whether the message contains a private chat.
+        """
+        if self.chat:
+            return self.chat.type == "private"
+        return None
+
+    def is_group(self) -> bool:
+        """
+        Checks whether the message contains a group chat.
+        """
+        if self.chat:
+            return self.chat.type in ["supergroup", "group"]
+        return None
+
+    def run_function_in_thread(self, func, *args, **kwargs):
+        """
+            Run the given function in a separate thread.
+        """
+        thread = threading.Thread(target=func, args=args, kwargs=kwargs)
+        thread.start()
+        return thread
