@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class User(BaseModel):
@@ -554,8 +554,19 @@ class Message(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
-# Dependencies from the Message module:
-# User, Chat, Message, Location, ShippingAddress, OrderInfo, Poll, PollAnswer
+    @staticmethod
+    def convert_unicode(text: str) -> str:
+        """
+        Converts Persian digits to English digits.
+        """
+        trans_table = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
+        return text.translate(trans_table)
+
+    @field_validator("text", mode="before", check_fields=True)
+    def normalize_text(cls, v):
+        if v is not None:
+            return cls.convert_unicode(v)
+        return v
 
 class InlineQuery(BaseModel):
     id: str = Field(..., alias="id")
@@ -739,20 +750,20 @@ class Update(BaseModel):
 
 
 # Resolve forward references
-InlineQuery.update_forward_refs()
-ChosenInlineResult.update_forward_refs()
-CallbackQuery.update_forward_refs()
-ShippingQuery.update_forward_refs()
-PreCheckoutQuery.update_forward_refs()
-ChatInviteLink.update_forward_refs()
-ChatMemberUpdated.update_forward_refs()
-ChatJoinRequest.update_forward_refs()
-Update.update_forward_refs()
-Chat.update_forward_refs()
-Message.update_forward_refs()
-ChatMemberOwner.update_forward_refs()
-ChatMemberAdministrator.update_forward_refs()
-ChatMemberMember.update_forward_refs()
-ChatMemberRestricted.update_forward_refs()
-ChatMemberLeft.update_forward_refs()
-ChatMemberBanned.update_forward_refs()
+InlineQuery.model_rebuild()
+ChosenInlineResult.model_rebuild()
+CallbackQuery.model_rebuild()
+ShippingQuery.model_rebuild()
+PreCheckoutQuery.model_rebuild()
+ChatInviteLink.model_rebuild()
+ChatMemberUpdated.model_rebuild()
+ChatJoinRequest.model_rebuild()
+Update.model_rebuild()
+Chat.model_rebuild()
+Message.model_rebuild()
+ChatMemberOwner.model_rebuild()
+ChatMemberAdministrator.model_rebuild()
+ChatMemberMember.model_rebuild()
+ChatMemberRestricted.model_rebuild()
+ChatMemberLeft.model_rebuild()
+ChatMemberBanned.model_rebuild()
