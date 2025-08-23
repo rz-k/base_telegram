@@ -5,7 +5,7 @@ from apps.telegram.telegram_models import Update
 
 class Dispatcher:
     """
-    Dispatcher is responsible for routing incoming Telegram updates to the appropriate handler 
+    Dispatcher is responsible for routing incoming Telegram updates to the appropriate handler
     based on the type of content in the update.
 
     Attributes:
@@ -16,7 +16,7 @@ class Dispatcher:
         dispatch():
             Routes the update to the appropriate handler:
             - If it's a command (starts with '/'), it is handled by CommandHandler.
-            - If it's a media message (photo, audio, video, voice, document, or sticker), 
+            - If it's a media message (photo, audio, video, voice, document, or sticker),
               it is handled by MediaHandler.
             - If it's a regular text message, it is handled by MessageHandler.
             - If it's a callback query (e.g., from inline buttons), it is handled by CallBackQueryHandler.
