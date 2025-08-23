@@ -167,3 +167,15 @@ class BaseHandler:
         thread = threading.Thread(target=func, args=args, kwargs=kwargs)
         thread.start()
         return thread
+
+    def is_update_mode(self):
+        """Check if the application is currently in update mode."""
+        from apps.bot.models import BotUpdateStatus
+        update_obj = BotUpdateStatus.objects.first()
+        if update_obj.is_update and not self.user_obj.is_superuser:
+            return self.bot.send_message(
+                self.chat_id,
+                text=update_obj.update_msg,
+                parse_mode="html"
+            )
+        return False

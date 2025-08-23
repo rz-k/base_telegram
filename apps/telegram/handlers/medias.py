@@ -10,4 +10,5 @@ class MediaHandler(BaseHandler):
 
 
     def handle(self):
+        if self.is_update_mode():return  # noqa: E701
         print("Media Handlers")

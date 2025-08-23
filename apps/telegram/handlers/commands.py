@@ -36,6 +36,7 @@ class CommandHandler(BaseHandler):
         return self.bot.send_message(chat_id=self.chat_id, text="Help Command")
 
     def handle(self):
+        if self.is_update_mode():return  # noqa: E701
 
         if self.update.message.text.startswith("/start"):
             self.start_handler()

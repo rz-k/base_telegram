@@ -17,6 +17,8 @@ class CallBackQueryHandler(BaseHandler):
 
     def handle(self):
         print("CallBackQueryHandler Handlers")
+        # check update bot
+        if self.is_update_mode():return  # noqa: E701
 
         callback_data = self.update.callback_query.data or ""
         base_key = callback_data.split(":", 1)[0] # callback_data is "check_joined_channel_sponsor" or "check_joined_channel_sponsor:user_id"
