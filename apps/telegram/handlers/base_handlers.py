@@ -57,57 +57,29 @@ class BaseHandler:
         """
         return self.chat.id if self.chat else None
 
-    def create_user(self, **kwargs):
-        """
-        Ensures the Telegram user is stored in the database.
-        If the user does not exist, creates a new one.
-        """
-        if UserDB.objects.filter(user_id=self.user_id).exists():
-            return None
-        username = self.user.username or str(self.user_id)
-
-        if UserDB.objects.filter(username=username).exists():
-            username = str(self.user_id)
-        try:
-            user = UserDB.objects.create_user(
-                username=username,
-                password=str(self.user_id),
-                first_name=self.user.first_name,
-                last_name=self.user.last_name or str(self.user_id),
-                user_id=self.user_id,
-                **kwargs
-            )
-            return user
-        except Exception as e:
-            print(e)
-            return None
-
     @cached_property
-    def user_qs(self):
-        """
-        Returns the QuerySet for the current user from the database.
-        """
-        if self.user:
-            if self.is_private():
-                self.create_user()
-            return UserDB.objects.filter(user_id=self.user_id)
-        return None
-
-    @cached_property
-    def user_obj(self) -> UserDB:
-        """
-        Returns the first user object from the user QuerySet.
-        """
-        if self.user_qs:
-            return self.user_qs.first()
-        return None
+    def user_obj(self) -> Optional[UserDB]:
+        if not self.user:
+            return None
+        if not self.is_private():
+            return None
+        user, _ = UserDB.objects.get_or_create(
+            user_id=self.user_id,
+            defaults={
+                "username": self.user.username or str(self.user_id),
+                "password": str(self.user_id),
+                "first_name": self.user.first_name,
+                "last_name": self.user.last_name or str(self.user_id),
+            }
+        )
+        return user
 
     @property
     def user_step(self):
         """
         Returns the current user step from the database.
         """
-        return self.user_obj.step
+        return self.user_obj.step if self.user_obj else None
 
     @property
     def user_id(self) -> Optional[int]:

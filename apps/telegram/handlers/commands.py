@@ -23,9 +23,7 @@ class CommandHandler(BaseHandler):
         This function serves as the main entry point of the bot and represents the home screen.
         """
 
-        self.create_user(step="home")
         update_object(self.user_obj, step="home")
-
         return self.bot.send_message(
             chat_id=self.chat_id,
             text="Home",
