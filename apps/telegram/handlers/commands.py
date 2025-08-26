@@ -1,3 +1,4 @@
+from apps.telegram.decorator import sponsor_required
 from apps.telegram.handlers.base_handlers import BaseHandler
 from apps.telegram.telegram import Telegram
 from apps.telegram.telegram_models import Update
@@ -11,7 +12,7 @@ class CommandHandler(BaseHandler):
         self.bot = bot
         self.update = update
 
-
+    @sponsor_required
     def start_handler(self):
         """
         Handles the /start command or entry point of the bot.

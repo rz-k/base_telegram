@@ -1,3 +1,4 @@
+from apps.telegram.decorator import sponsor_required
 from apps.telegram.handlers.base_handlers import BaseHandler
 from apps.telegram.telegram import Telegram
 from apps.telegram.telegram_models import Update
@@ -16,6 +17,7 @@ class MessageHandler(BaseHandler):
             "second_button": self.second_button
         }
 
+    @sponsor_required
     def home(self):
         """
         Handles user interactions when the user is at the "home" step.

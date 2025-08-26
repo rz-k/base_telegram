@@ -63,3 +63,25 @@ class InlineKeyboardMarkup(BaseKeyboard):
             data=markup
         )
 
+    def sponsor_channel_keyboard(self, channels):
+
+        child = []
+        for channel in channels.order_by("-other"):
+            child.append(
+                [{"text": f"{channel.name}", "url": channel.link}]
+            )
+        if child:
+            child.append(
+                [
+                    {"text": "تایید عضویت ✅", "callback_data": "joined_to_sponsor"}  # noqa: F541
+                ]
+            )
+        markup = {
+            "inline_keyboard": child
+        }
+        return self.to_json(data=markup)
+
+    def remove_keyboard(self):
+        markup = {"inline_keyboard": []}
+        return self.to_json(data=markup)
+
