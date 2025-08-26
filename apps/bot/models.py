@@ -22,3 +22,16 @@ class Message(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name}"
+
+class ChannelSponsor(models.Model):
+
+    name = models.CharField(max_length=70,null=True,blank=True)
+
+    chat_id = models.CharField(max_length=70,unique=True,null=True,blank=True)
+
+    link = models.CharField(max_length=70,unique=True)
+
+    other = models.BooleanField(default=False,null=True,blank=True)
+
+    def __str__(self) -> str:
+        return self.name
