@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from apps.bot.models import BotUpdateStatus, Message
+from apps.bot.models import BotUpdateStatus, Message, ChannelSponsor
 
 
 @admin.register(BotUpdateStatus)
@@ -18,3 +18,12 @@ class MessageAdmin(admin.ModelAdmin):
 
     def _text(self, obj):
         return obj.text[:30]
+
+@admin.register(ChannelSponsor)
+class ChannelSponsorAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "chat_id", "other", "_link")
+    search_fields = ("name", )
+    list_editable = ("name", "other")
+
+    def _link(self, obj):
+        return obj.link[:30]
