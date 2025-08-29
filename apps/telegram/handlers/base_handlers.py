@@ -153,3 +153,13 @@ class BaseHandler:
                 parse_mode="html"
             )
         return False
+
+    def is_user_block(self):
+
+        if self.user_obj and not self.user_obj.is_active:
+            return self.bot.send_message(
+                self.chat_id,
+                text="شما در ربات بلاک شده اید",
+                parse_mode="html"
+            )
+        return False

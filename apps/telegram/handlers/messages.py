@@ -66,6 +66,7 @@ class MessageHandler(BaseHandler):
 
     def handle(self):
         if self.is_update_mode():return  # noqa: E701
+        if self.is_user_block():return  # noqa: E701
 
         if self.user_step:
             if callback := self.steps.get(self.user_step): # step : "home"
