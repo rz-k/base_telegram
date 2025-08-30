@@ -3,6 +3,7 @@ from apps.telegram.handlers.base_handlers import BaseHandler
 from apps.telegram.telegram import Telegram
 from apps.telegram.telegram_models import Update
 from utils.utils import update_object
+from apps.telegram._types import ReplyParameters
 
 
 class CommandHandler(BaseHandler):
@@ -29,6 +30,10 @@ class CommandHandler(BaseHandler):
             chat_id=self.chat_id,
             text="Home",
             reply_markup=self.reply_keyboard.home_keyboard(),
+            reply_parameters=ReplyParameters(
+                chat_id=self.chat_id,
+                message_id=self.update.message.message_id
+            )
         )
 
     def help_handler(self):
