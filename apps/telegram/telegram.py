@@ -61,9 +61,9 @@ class Telegram:
                 if isinstance(v, dict):
                     data[k] = json.dumps(v)
         if params:
-            for k, v in data.items():
+            for k, v in params.items():
                 if isinstance(v, dict):
-                    data[k] = json.dumps(v)
+                    params[k] = json.dumps(v)
         try:
             if method.upper() == "GET":
                 response = self._session.get(
@@ -1332,6 +1332,22 @@ class Telegram:
 
         filtered_payload = {k: v for k, v in payload.items() if v is not None}
         return self._make_request("sendChecklist", method="POST", data=filtered_payload)
+
+
+    def is_join_channel(self, chat_id, user_id, **kwargs):
+        if chat_id.isnumeric():
+            chat_id = chat_id if '@' in chat_id else '@'+str(chat_id)
+        data = {
+            "chat_id": chat_id,
+            "user_id": user_id
+        }
+        data.update(**kwargs)
+        result = self._make_request("getChatMember", method="GET", params=data)
+        if result['ok']:
+            return result['result']['status'] != 'left'
+        else:
+            return False
+
 
     def send_dice(
         self,

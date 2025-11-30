@@ -1,9 +1,9 @@
+from apps.telegram._types import ReplyParameters
 from apps.telegram.decorator import sponsor_required
 from apps.telegram.handlers.base_handlers import BaseHandler
 from apps.telegram.telegram import Telegram
 from apps.telegram.telegram_models import Update
 from utils.utils import update_object
-from apps.telegram._types import ReplyParameters
 
 
 class CommandHandler(BaseHandler):
