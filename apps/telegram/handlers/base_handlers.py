@@ -5,7 +5,7 @@ from django.utils.functional import cached_property
 
 from apps.account.models import User as UserDB
 from apps.common._message import MessageManager
-from apps.telegram.keyboard import InlineKeyboardMarkup, ReplyKeyboardMarkup
+from apps.telegram.keyboard import InlineKeyboardMarkupKeyboard, ReplyKeyboardMarkupKeyboard
 from apps.telegram.telegram import Telegram
 from apps.telegram.telegram_models import Chat, Update, User
 
@@ -22,8 +22,8 @@ class BaseHandler:
         """
         self.update = update
         self.bot = bot
-        self.reply_keyboard = ReplyKeyboardMarkup()
-        self.inline_keyboard = InlineKeyboardMarkup()
+        self.reply_keyboard = ReplyKeyboardMarkupKeyboard()
+        self.inline_keyboard = InlineKeyboardMarkupKeyboard()
         self.bot_messages = MessageManager()
 
     @property

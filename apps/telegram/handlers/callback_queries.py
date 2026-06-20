@@ -12,16 +12,21 @@ class CallBackQueryHandler(BaseHandler):
 
         self.callback_handlers = {
             "joined_to_sponsor": self.joined_channel_sponsor_handler,
+            "first_button": self.first_button_handler,
         }
 
     @sponsor_required
     def joined_channel_sponsor_handler(self):
+        self.bot.answer_callback_query(callback_query_id=self.update.callback_query.id, text="⏳")
         self.bot.delete_message(chat_id=self.chat_id, message_id=self.update.callback_query.message.message_id)
         update_object(self.user_obj, step="home")
         return self.bot.send_message(
             chat_id=self.chat_id,
             text="Home"
         )
+
+    def first_button_handler(self):
+        return self.bot.answer_callback_query(callback_query_id=self.update.callback_query.id, text="first_button")
 
     def handle(self):
         print("CallBackQueryHandler Handlers")

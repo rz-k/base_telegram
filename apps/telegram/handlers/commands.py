@@ -1,8 +1,7 @@
-from apps.telegram._types import ReplyParameters
 from apps.telegram.decorator import sponsor_required
 from apps.telegram.handlers.base_handlers import BaseHandler
 from apps.telegram.telegram import Telegram
-from apps.telegram.telegram_models import Update
+from apps.telegram.telegram_models import ReplyParameters, Update
 from utils.utils import update_object
 
 
@@ -10,8 +9,6 @@ class CommandHandler(BaseHandler):
 
     def __init__(self, update: Update, bot: Telegram):
         super().__init__(update, bot)
-        self.bot = bot
-        self.update = update
 
     @sponsor_required
     def start_handler(self):
@@ -40,14 +37,14 @@ class CommandHandler(BaseHandler):
         return self.bot.send_message(chat_id=self.chat_id, text="Help Command")
 
     def handle(self):
+        print("Command Handlers")
         if self.is_update_mode():return  # noqa: E701
         if self.is_user_block():return  # noqa: E701
 
 
         if self.update.message.text.startswith("/start"):
-            self.start_handler()
+            return self.start_handler()
 
         elif self.update.message.text.startswith("/help"):
-            self.help_handler()
+            return self.help_handler()
 
-        print("Command Handlers")

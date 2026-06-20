@@ -9,9 +9,6 @@ class MessageHandler(BaseHandler):
 
     def __init__(self, update: Update, bot: Telegram):
         super().__init__(update, bot)
-        self.update = update
-        self.bot = bot
-
         self.steps = {
             "home": self.home,
             "second_button": self.second_button
@@ -57,7 +54,6 @@ class MessageHandler(BaseHandler):
         if self.update.message.text == "بازگشت":
             # update user step
             update_object(self.user_obj, step="home")
-
             return self.bot.send_message(
                 chat_id=self.chat_id,
                 text="Home",
