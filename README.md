@@ -73,14 +73,14 @@ uv sync
 After installing the required packages, create the environment configuration file:
 
 ```bash
-cp .env.ini.example .env.ini
+cp .env.example .env
 ```
 
-Then, the contents of the `.env.ini` file should look like this:
+Then, the contents of the `.env` file should look like this:
 
 ---
 
-## 🧩 `.env.ini` File Structure
+## 🧩 `.env` File Structure
 
 ### ini
 [DjangoSettings]
