@@ -12,3 +12,4 @@ wheels/
 *.db
 *db.sqlite3
 .env.ini
+.env
