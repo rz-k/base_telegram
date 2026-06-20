@@ -57,6 +57,14 @@ class BaseHandler:
         """
         return self.chat.id if self.chat else None
 
+    @property
+    def message_id(self) -> Optional[int]:
+        if self.update.message:
+            return self.update.message.message_id
+        if self.update.callback_query:
+            return self.update.callback_query.message.message_id
+        return None
+
     @cached_property
     def user_obj(self) -> Optional[UserDB]:
         if not self.user:
