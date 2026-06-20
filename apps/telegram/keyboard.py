@@ -1,81 +1,112 @@
-import json
+from apps.telegram.telegram_models import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 
 
 class BaseKeyboard:
+    pass
 
-    def to_json(self, data: dict):
-        return json.dumps(data)
-
-
-class ReplyKeyboardMarkup(BaseKeyboard):
+class ReplyKeyboardMarkupKeyboard(BaseKeyboard):
 
     def home_keyboard(self):
-        markup = {
-            "keyboard": [
-                ["دکمه اول", "دکمه دوم"],
-                ["دکمه سوم", "دکمه چهارم"]
-            ],
-            "resize_keyboard":True
-        }
-        return self.to_json(
-            data=markup
-        )
+        markup = ReplyKeyboardMarkup(
+                keyboard=[
+                    [
+                        KeyboardButton(text="دکمه اول"),
+                        KeyboardButton(text="دکمه دوم"),
+                    ],
+                    [
+                        KeyboardButton(text="دکمه سوم"),
+                        KeyboardButton(text="دکمه چهارم"),
+                    ]
+                ],
+                resize_keyboard=True
+            )
+        return markup
 
     def back_keyboard(self):
-        markup = {
-            "keyboard": [
-                ["بازگشت"]
+        markup = ReplyKeyboardMarkup(
+            keyboard=[
+                [
+                    KeyboardButton(text="بازگشت")
+                ]
             ],
-            "resize_keyboard":True
-        }
-        return self.to_json(
-            data=markup
+            resize_keyboard=True
         )
+        return markup
 
     def remove_keyboard(self):
-        markup = {"keyboard": []}
-        return self.to_json(
-            data=markup
-        )
+        markup = ReplyKeyboardRemove(remove_keyboard=True)
+        return markup
 
-class InlineKeyboardMarkup(BaseKeyboard):
+class InlineKeyboardMarkupKeyboard(BaseKeyboard):
 
     def first_keyboard(self):
-        markup = {
-            "inline_keyboard": [
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[
                 [
-                    {"text": "دکمه اول", "callback_data": "first_button"},
-                    {"text": "دکمه دوم", "callback_data": "second_button"}
+                    InlineKeyboardButton(
+                        text="دکمه اول",
+                        callback_data="first_button",
+                        style="success"
+                    ),
+                    InlineKeyboardButton(
+                        text="دکمه دوم",
+                        callback_data="first_button",
+                        style="primary"
+                    )
                 ],
                 [
-                    {"text": "دکمه سوم", "callback_data": "third_button"},
-                    {"text": "دکمه چهارم", "callback_data": "fourth_button"}
+                    InlineKeyboardButton(
+                        text="دکمه سوم",
+                        callback_data="first_button",
+                        style="success"
+                    ),
+                    InlineKeyboardButton(
+                        text="دکمه چهارم",
+                        callback_data="first_button",
+                        style="primary"
+                    )
                 ]
             ]
-        }
-        return self.to_json(
-            data=markup
         )
+        return markup
 
     def sponsor_channel_keyboard(self, channels):
 
         child = []
         for channel in channels.order_by("-other"):
             child.append(
-                [{"text": f"{channel.name}", "url": channel.link}]
+                [
+                    InlineKeyboardButton(
+                        text=f"{channel.name}",
+                        url=channel.link,
+                        style="primary"
+                    )
+                ]
             )
         if child:
             child.append(
                 [
-                    {"text": "تایید عضویت ✅", "callback_data": "joined_to_sponsor"}  # noqa: F541
+                    InlineKeyboardButton(
+                        text="برسی عضویت ✅",
+                        callback_data="joined_to_sponsor",
+                        style="success"
+                    )
                 ]
             )
-        markup = {
-            "inline_keyboard": child
-        }
-        return self.to_json(data=markup)
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=child
+        )
+        return markup
 
     def remove_keyboard(self):
-        markup = {"inline_keyboard": []}
-        return self.to_json(data=markup)
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[]
+        )
+        return markup
 
