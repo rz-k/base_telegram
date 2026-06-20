@@ -57,12 +57,6 @@ class InlineKeyboardMarkup(BaseKeyboard):
             data=markup
         )
 
-    def remove_keyboard(self):
-        markup = {"inline_keyboard": []}
-        return self.to_json(
-            data=markup
-        )
-
     def sponsor_channel_keyboard(self, channels):
 
         child = []
