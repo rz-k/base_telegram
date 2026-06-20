@@ -1,18 +1,78 @@
 import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, cast
 
 import requests
 
-from apps.telegram._types import (
+from apps.telegram.telegram_models import (
+    AcceptedGiftTypes,
+    BotAccessSettings,
+    BotCommand,
+    BotCommandList,
+    BotCommandScope,
+    BotDescription,
+    BotName,
+    BotShortDescription,
+    BusinessConnection,
+    ChatAdministratorRights,
+    ChatFullInfo,
+    ChatInviteLink,
+    ChatMember,
+    ChatMemberAdapter,
+    ChatPermissions,
+    File,
+    ForumTopic,
+    GameHighScore,
+    Gift,
     InlineKeyboardMarkup,
+    InlineQueryResult,
+    InlineQueryResultsButton,
+    InputChecklist,
+    InputFile,
+    InputMedia,
+    InputPaidMedia,
+    InputPollMedia,
+    InputPollOption,
+    InputProfilePhoto,
+    InputRichMessage,
+    InputSticker,
+    InputStoryContent,
+    KeyboardButton,
+    LabeledPrice,
     LinkPreviewOptions,
+    MenuButton,
+    MenuButtonAdapter,
+    Message,
     MessageEntity,
+    MessageId,
+    MessageIdList,
+    MessageListAdapter,
+    OwnedGift,
+    OwnedGiftAdapter,
+    PassportElementError,
+    Poll,
+    PreparedInlineMessage,
+    PreparedKeyboardButton,
+    ReactionType,
     ReplyMarkup,
     ReplyParameters,
+    SentGuestMessage,
+    SentWebAppMessage,
+    ShippingOption,
+    StarAmount,
+    StarTransactions,
+    Sticker,
+    StickerList,
+    StickerSet,
+    Story,
+    StoryArea,
     SuggestedPostParameters,
-    WebAppInfo,
+    User,
+    UserChatBoosts,
+    UserProfileAudios,
+    UserProfilePhotos,
 )
 from utils.load_env import env
+from utils.logger import logger
 
 
 class Telegram:
@@ -21,17 +81,24 @@ class Telegram:
     Designed for clean, maintainable, and production-grade bot development.
     """
 
-    BASE_URL: str = "https://api.telegram.org/bot{}/{}"
     HEADERS: Dict[str, str] = {"Cache-Control": "no-cache"}
 
     def __init__(self):
+        self._validate_config()
         self.token = env.get("TOKEN")
-        if not self.token:
-            raise ValueError("TOKEN is required in environment variables.")
+        self.webhook = env.get("TM_WEBHOOK_URL")
 
         self.proxy = self._setup_proxy()
         self._session = requests.Session()
         self._session.headers.update(self.HEADERS)
+
+    def _validate_config(self):
+        """Ensure all required environment variables are present."""
+        if not env.get("TOKEN"):
+            raise ValueError("TOKEN is required in environment variables.")
+
+        if not env.get("TM_WEBHOOK_URL"):
+            raise ValueError("TM_WEBHOOK_URL is required in environment variables.")
 
     def _setup_proxy(self) -> Optional[Dict[str, str]]:
         """Configure SOCKS5 proxy if provided."""
@@ -39,7 +106,7 @@ class Telegram:
         if proxy_socks:
             return {
                 "http": f"socks5h://{proxy_socks}",
-                "https": f"socks5h://{proxy_socks}"
+                "https": f"socks5h://{proxy_socks}",
             }
         return {}
 
@@ -50,20 +117,15 @@ class Telegram:
         data: Optional[Dict[Any, Any]] = None,
         params: Optional[Dict[Any, Any]] = None,
         files: Optional[Dict[str, Any]] = None,
-        timeout: int = 30
+        timeout: int = 30,
     ) -> Dict[Any, Any]:
         """
         Send HTTP request to Telegram Bot API.
         """
-        url = self.BASE_URL.format(self.token, method_name)
-        if data:
-            for k, v in data.items():
-                if isinstance(v, dict):
-                    data[k] = json.dumps(v)
-        if params:
-            for k, v in params.items():
-                if isinstance(v, dict):
-                    params[k] = json.dumps(v)
+        url = self.webhook + f"bot{self.token}/{method_name}"
+        response = json.loads("{}")
+        params = self._clean_dict(params)
+        data = self._clean_dict(data)
         try:
             if method.upper() == "GET":
                 response = self._session.get(
@@ -71,47 +133,81 @@ class Telegram:
                 )
             else:
                 response = self._session.post(
-                    url, data=data, params=params, files=files,
-                    proxies=self.proxy, timeout=timeout
+                    url,
+                    data=data,
+                    params=params,
+                    files=files,
+                    timeout=100,
+                    proxies=self.proxy,
                 )
-            response.raise_for_status()
-            return response.json()
+
+            json_data = response.json()
+
+            if not json_data.get("ok", False):
+                error_msg = json_data.get("description", "Unknown Telegram API error")
+                logger.error(
+                    f"Telegram API error | Method: {method_name} | Code: {json_data.get('error_code')} | Description: {error_msg}",
+                )
+                return {"ok": False, "error": error_msg}
+
+            return json_data["result"]
+
         except Exception as e:
-            print(f"[Telegram API Error] {method_name}: {e}")
+            logger.error(f"[Erro -> {method_name}]{response.json()}")
             return {"ok": False, "error": str(e)}
+
+    def _clean_dict(self, data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Remove None values and convert nested dicts to JSON strings."""
+        if data is None:
+            return None
+
+        cleaned = {}
+        for key, value in data.items():
+            if value is None:
+                continue
+
+            if hasattr(value, "model_dump"):
+                value = value.model_dump(exclude_none=True)
+
+            if isinstance(value, dict):
+                cleaned[key] = json.dumps(value, ensure_ascii=False)
+            else:
+                cleaned[key] = value
+
+        return cleaned
 
     def close(self):
         """Close the session."""
         self._session.close()
 
     def __enter__(self):
-        return self
+        response = self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    # =============================
-    # === SEND MESSAGE METHOD ===
-    # =============================
+    def get_me(self) -> User:
+        response = self._make_request("getMe", method="GET")
+        return User.model_validate(response)
 
     def send_message(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         text: str,
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        parse_mode: Optional[str] = None,
-        entities: Optional[List[MessageEntity]] = None,
-        link_preview_options: Optional[LinkPreviewOptions] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        parse_mode: str | None = "html",
+        entities: List[MessageEntity] | None = None,
+        link_preview_options: LinkPreviewOptions | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send a text message to a chat.
 
@@ -150,23 +246,22 @@ class Telegram:
             "reply_markup": reply_markup,
         }
 
-        # Remove None values before sending
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-
-        return self._make_request("sendMessage", data=filtered_payload)
+        response = self._make_request("sendMessage", data=payload)
+        message = Message.model_validate(response)
+        return message
 
     def forward_message(
         self,
-        chat_id: Union[int, str],
-        from_chat_id: Union[int, str],
+        chat_id: int | str,
+        from_chat_id: int | str,
         message_id: int,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        video_start_timestamp: Optional[int] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None
-    ) -> Dict[Any, Any]:
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        video_start_timestamp: int | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+    ) -> Message:
         """
         Forward a message of any kind.
 
@@ -192,19 +287,20 @@ class Telegram:
             "protect_content": protect_content,
             "suggested_post_parameters": suggested_post_parameters,
         }
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("forwardMessage", data=filtered_payload)
+        response = self._make_request("forwardMessage", data=payload)
+        message = Message.model_validate(response)
+        return message
 
     def forward_messages(
         self,
-        chat_id: Union[int, str],
-        from_chat_id: Union[int, str],
+        chat_id: int | str,
+        from_chat_id: int | str,
         message_ids: List[int],
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+    ) -> List[MessageId]:
         """
         Forward multiple messages of any kind at once.
 
@@ -226,28 +322,28 @@ class Telegram:
             "disable_notification": disable_notification,
             "protect_content": protect_content,
         }
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("forwardMessages", data=filtered_payload)
+        response = self._make_request("forwardMessages", data=payload)
+        return MessageIdList.validate_python(response or [])
 
     def copy_message(
         self,
-        chat_id: Union[int, str],
-        from_chat_id: Union[int, str],
+        chat_id: int | str,
+        from_chat_id: int | str,
         message_id: int,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        video_start_timestamp: Optional[int] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        video_start_timestamp: int | None = None,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        caption_entities: List[MessageEntity] | None = None,
+        show_caption_above_media: bool | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> MessageId:
         """
         Copy a message to another chat without a link to the original.
 
@@ -287,20 +383,21 @@ class Telegram:
             "reply_parameters": reply_parameters,
             "reply_markup": reply_markup,
         }
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("copyMessage", data=filtered_payload)
+        response = self._make_request("forwardMessage", data=payload)
+        msg_id = MessageId.model_validate(response)
+        return msg_id
 
     def copy_messages(
         self,
-        chat_id: Union[int, str],
-        from_chat_id: Union[int, str],
+        chat_id: int | str,
+        from_chat_id: int | str,
         message_ids: List[int],
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        remove_caption: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        remove_caption: bool | None = None,
+    ) -> List[MessageId]:
         """
         Copy multiple messages to another chat without links to the originals.
 
@@ -324,29 +421,29 @@ class Telegram:
             "protect_content": protect_content,
             "remove_caption": remove_caption,
         }
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("copyMessages", data=filtered_payload)
+        response = self._make_request("copyMessages", data=payload)
+        return MessageIdList.validate_python(response or [])
 
     def send_photo(
         self,
-        chat_id: Union[int, str],
-        photo: Union[str, bytes],
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        has_spoiler: Optional[bool] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        photo: str | bytes,
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        caption_entities: List[MessageEntity] | None = None,
+        show_caption_above_media: bool | None = None,
+        has_spoiler: bool | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send a photo to a chat. Uses GET for file_id/URL, POST for raw bytes.
 
@@ -392,36 +489,117 @@ class Telegram:
             # Upload new photo → use POST + multipart/form-data
             files = {"photo": photo}
             payload["photo"] = None
-            filtered_payload = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendPhoto", method="POST", data=filtered_payload, files=files)
+            response = self._make_request(
+                "sendPhoto", method="POST", data=payload, files=files
+            )
         else:
             # Reuse existing file_id or URL → use GET
             payload["photo"] = photo
-            filtered_params = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendPhoto", method="GET", params=filtered_params)
+            response = self._make_request("sendPhoto", method="GET", params=payload)
+
+        return Message.model_validate(response)
+
+    def send_live_photo(
+        self,
+        chat_id: int | str,
+        live_photo: InputFile | str,
+        photo: InputFile | str,
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        caption_entities: List[MessageEntity] | None = None,
+        show_caption_above_media: bool | None = None,
+        has_spoiler: bool | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
+        """
+        Use this method to send live photos.
+
+        :param business_connection_id: Unique identifier of the business connection on behalf of which the message will be sent.
+        :param chat_id: Unique identifier for the target chat or username of the target channel (in the format @channelusername).
+        :param message_thread_id: Unique identifier for the target message thread (topic) of a forum; for forum supergroups and private chats of bots with forum topic mode enabled only.
+        :param direct_messages_topic_id: Identifier of the direct messages topic to which the message will be sent; required if the message is sent to a direct messages chat.
+        :param live_photo: Live photo video to send. The video must be no longer than 10 seconds and must not exceed 10 MB in size. Pass a file_id as String to send a video that exists on the Telegram servers (recommended) or upload a new video using multipart/form-data. More information on Sending Files ». Sending live photos by a URL is currently unsupported.
+        :param photo: The static photo to send. Pass a file_id as String to send a photo that exists on the Telegram servers (recommended) or upload a new video using multipart/form-data. More information on Sending Files ». Sending live photos by a URL is currently unsupported.
+        :param caption: Video caption (may also be used when resending videos by file_id), 0-1024 characters after entities parsing.
+        :param parse_mode: Mode for parsing entities in the video caption. See formatting options for more details.
+        :param caption_entities: A JSON-serialized list of special entities that appear in the caption, which can be specified instead of parse_mode.
+        :param show_caption_above_media: Pass True, if the caption must be shown above the message media.
+        :param has_spoiler: Pass True if the video needs to be covered with a spoiler animation.
+        :param disable_notification: Sends the message silently. Users will receive a notification with no sound.
+        :param protect_content: Protects the contents of the sent message from forwarding and saving.
+        :param allow_paid_broadcast: Pass True to allow up to 1000 messages per second, ignoring broadcasting limits for a fee of 0.1 Telegram Stars per message. The relevant Stars will be withdrawn from the bot's balance.
+        :param message_effect_id: Unique identifier of the message effect to be added to the message; for private chats only.
+        :param suggested_post_parameters: Parameters for sending a suggested post.
+        :param reply_parameters: Description of the message to reply to.
+        :param reply_markup: Additional interface options. A JSON-serialized object for an inline keyboard, custom reply keyboard, instructions to remove a reply keyboard or to force a reply from the user.
+        :return: The sent Message object on success.
+        """
+        payload = {
+            "business_connection_id": business_connection_id,
+            "chat_id": chat_id,
+            "message_thread_id": message_thread_id,
+            "direct_messages_topic_id": direct_messages_topic_id,
+            "live_photo": live_photo,
+            "photo": photo,
+            "caption": caption,
+            "parse_mode": parse_mode,
+            "caption_entities": caption_entities,
+            "show_caption_above_media": show_caption_above_media,
+            "has_spoiler": has_spoiler,
+            "disable_notification": disable_notification,
+            "protect_content": protect_content,
+            "allow_paid_broadcast": allow_paid_broadcast,
+            "message_effect_id": message_effect_id,
+            "suggested_post_parameters": suggested_post_parameters,
+            "reply_parameters": reply_parameters,
+            "reply_markup": reply_markup,
+        }
+
+        if isinstance(photo, bytes):
+            # Upload new photo → use POST + multipart/form-data
+            files = {"photo": photo}
+            payload["photo"] = None
+            response = self._make_request(
+                "sendLivePhoto", method="POST", data=payload, files=files
+            )
+        else:
+            # Reuse existing file_id or URL → use GET
+            payload["photo"] = photo
+            response = self._make_request("sendLivePhoto", method="GET", params=payload)
+
+        return Message.model_validate(response)
 
     def send_audio(
         self,
-        chat_id: Union[int, str],
-        audio: Union[str, bytes],
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        duration: Optional[int] = None,
-        performer: Optional[str] = None,
-        title: Optional[str] = None,
-        thumbnail: Optional[Union[str, bytes]] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        audio: str | bytes,
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        caption_entities: List[MessageEntity] | None = None,
+        duration: int | None = None,
+        performer: str | None = None,
+        title: str | None = None,
+        thumbnail: str | bytes | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send an audio file (e.g., music) to be displayed in the music player.
 
@@ -469,42 +647,48 @@ class Telegram:
         if isinstance(audio, bytes):
             # Upload new audio → use POST + multipart/form-data
             files = {"audio": audio}
+
             if isinstance(thumbnail, bytes):
                 files["thumbnail"] = thumbnail
                 payload["thumbnail"] = "attach://thumbnail"
+
             elif thumbnail:
                 payload["thumbnail"] = thumbnail
+
             payload["audio"] = None
-            filtered_payload = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendAudio", method="POST", data=filtered_payload, files=files)
+            response = self._make_request(
+                "sendAudio", method="POST", data=payload, files=files
+            )
         else:
             # Reuse existing file_id or URL → use GET
             payload["audio"] = audio
             if thumbnail:
                 payload["thumbnail"] = thumbnail
-            filtered_params = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendAudio", method="GET", params=filtered_params)
+
+            response = self._make_request("sendAudio", method="GET", params=payload)
+
+        return Message.model_validate(response)
 
     def send_document(
         self,
-        chat_id: Union[int, str],
-        document: Union[str, bytes],
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        thumbnail: Optional[Union[str, bytes]] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        disable_content_type_detection: Optional[bool] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        document: str | bytes,
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        thumbnail: str | bytes | None = None,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        caption_entities: List[MessageEntity] | None = None,
+        disable_content_type_detection: bool | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send a general file to a chat. Uses GET for file_id/URL, POST for raw bytes.
 
@@ -551,46 +735,51 @@ class Telegram:
             if isinstance(thumbnail, bytes):
                 files["thumbnail"] = thumbnail
                 payload["thumbnail"] = "attach://thumbnail"
+
             elif thumbnail:
                 payload["thumbnail"] = thumbnail
+
             payload["document"] = None
-            filtered_payload = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendDocument", method="POST", data=filtered_payload, files=files)
+            response = self._make_request(
+                "sendDocument", method="POST", data=payload, files=files
+            )
         else:
             # Reuse existing file_id or URL → use GET
             payload["document"] = document
             if thumbnail:
                 payload["thumbnail"] = thumbnail
-            filtered_params = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendDocument", method="GET", params=filtered_params)
+
+            response = self._make_request("sendDocument", method="GET", params=payload)
+
+        return Message.model_validate(response)
 
     def send_video(
         self,
-        chat_id: Union[int, str],
-        video: Union[str, bytes],
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        duration: Optional[int] = None,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
-        thumbnail: Optional[Union[str, bytes]] = None,
-        cover: Optional[Union[str, bytes]] = None,
-        start_timestamp: Optional[int] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        has_spoiler: Optional[bool] = None,
-        supports_streaming: Optional[bool] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        video: str | bytes,
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        duration: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        thumbnail: str | bytes | None = None,
+        cover: str | bytes | None = None,
+        start_timestamp: int | None = None,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        caption_entities: List[MessageEntity] | None = None,
+        show_caption_above_media: bool | None = None,
+        has_spoiler: bool | None = None,
+        supports_streaming: bool | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send a video file to a chat. Uses GET for file_id/URL, POST for raw bytes.
 
@@ -650,50 +839,58 @@ class Telegram:
             if isinstance(thumbnail, bytes):
                 files["thumbnail"] = thumbnail
                 payload["thumbnail"] = "attach://thumbnail"
+
             elif thumbnail:
                 payload["thumbnail"] = thumbnail
+
             if isinstance(cover, bytes):
                 files["cover"] = cover
                 payload["cover"] = "attach://cover"
+
             elif cover:
                 payload["cover"] = cover
+
             payload["video"] = None
-            filtered_payload = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendVideo", method="POST", data=filtered_payload, files=files)
+            response = self._make_request(
+                "sendVideo", method="POST", data=payload, files=files
+            )
         else:
             # Reuse existing file_id or URL → use GET
             payload["video"] = video
             if thumbnail:
                 payload["thumbnail"] = thumbnail
+
             if cover:
                 payload["cover"] = cover
-            filtered_params = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendVideo", method="GET", params=filtered_params)
+
+            response = self._make_request("sendVideo", method="GET", params=payload)
+
+        return Message.model_validate(response)
 
     def send_animation(
         self,
-        chat_id: Union[int, str],
-        animation: Union[str, bytes],
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        duration: Optional[int] = None,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
-        thumbnail: Optional[Union[str, bytes]] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        has_spoiler: Optional[bool] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        animation: str | bytes,
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        duration: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        thumbnail: str | bytes | None = None,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        caption_entities: List[MessageEntity] | None = None,
+        show_caption_above_media: bool | None = None,
+        has_spoiler: bool | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send an animation file (GIF or H.264/MPEG-4 AVC video without sound).
 
@@ -748,38 +945,43 @@ class Telegram:
             if isinstance(thumbnail, bytes):
                 files["thumbnail"] = thumbnail
                 payload["thumbnail"] = "attach://thumbnail"
+
             elif thumbnail:
                 payload["thumbnail"] = thumbnail
+
             payload["animation"] = None
-            filtered_payload = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendAnimation", method="POST", data=filtered_payload, files=files)
+            response = self._make_request(
+                "sendAnimation", method="POST", data=payload, files=files
+            )
         else:
             # Reuse existing file_id or URL → use GET
             payload["animation"] = animation
             if thumbnail:
                 payload["thumbnail"] = thumbnail
-            filtered_params = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendAnimation", method="GET", params=filtered_params)
+
+            response = self._make_request("sendAnimation", method="GET", params=payload)
+
+        return Message.model_validate(response)
 
     def send_voice(
         self,
-        chat_id: Union[int, str],
-        voice: Union[str, bytes],
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        duration: Optional[int] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        voice: str | bytes,
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        caption_entities: List[MessageEntity] | None = None,
+        duration: int | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send a voice message (audio file displayed as voice message).
 
@@ -823,32 +1025,34 @@ class Telegram:
             # Upload new voice → use POST + multipart/form-data
             files = {"voice": voice}
             payload["voice"] = None
-            filtered_payload = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendVoice", method="POST", data=filtered_payload, files=files)
+            response = self._make_request(
+                "sendVoice", method="POST", data=payload, files=files
+            )
         else:
             # Reuse existing file_id or URL → use GET
             payload["voice"] = voice
-            filtered_params = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendVoice", method="GET", params=filtered_params)
+            response = self._make_request("sendVoice", method="GET", params=payload)
+
+        return Message.model_validate(response)
 
     def send_video_note(
         self,
-        chat_id: Union[int, str],
-        video_note: Union[str, bytes],
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        duration: Optional[int] = None,
-        length: Optional[int] = None,
-        thumbnail: Optional[Union[str, bytes]] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        video_note: str | bytes,
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        duration: int | None = None,
+        length: int | None = None,
+        thumbnail: str | bytes | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send a video note (round video message).
 
@@ -891,39 +1095,44 @@ class Telegram:
             if isinstance(thumbnail, bytes):
                 files["thumbnail"] = thumbnail
                 payload["thumbnail"] = "attach://thumbnail"
+
             elif thumbnail:
                 payload["thumbnail"] = thumbnail
+
             payload["video_note"] = None
-            filtered_payload = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendVideoNote", method="POST", data=filtered_payload, files=files)
+            response = self._make_request(
+                "sendVideoNote", method="POST", data=payload, files=files
+            )
         else:
             # Reuse existing file_id → use GET (URL not supported per API)
             payload["video_note"] = video_note
             if thumbnail:
                 payload["thumbnail"] = thumbnail
-            filtered_params = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendVideoNote", method="GET", params=filtered_params)
+
+            response = self._make_request("sendVideoNote", method="GET", params=payload)
+
+        return Message.model_validate(response)
 
     def send_paid_media(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         star_count: int,
-        media: List[Dict[str, Any]],
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        payload: Optional[str] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        media: List[InputPaidMedia],
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        payload: str | None = None,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        caption_entities: List[MessageEntity] | None = None,
+        show_caption_above_media: bool | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send paid media that requires Telegram Stars to access.
 
@@ -966,23 +1175,22 @@ class Telegram:
             "reply_parameters": reply_parameters,
             "reply_markup": reply_markup,
         }
-
-        filtered_payload = {k: v for k, v in payload_data.items() if v is not None}
-        return self._make_request("sendPaidMedia", method="POST", data=filtered_payload)
+        response = self._make_request("sendPaidMedia", method="POST", data=payload_data)
+        return Message.model_validate(response)
 
     def send_media_group(
         self,
-        chat_id: Union[int, str],
-        media: List[Dict[str, Any]],
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        reply_parameters: Optional[ReplyParameters] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        media: List[InputPaidMedia],
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        reply_parameters: ReplyParameters | None = None,
+    ) -> Message:
         """
         Send a group of photos, videos, documents, or audios as an album.
 
@@ -1011,30 +1219,29 @@ class Telegram:
             "message_effect_id": message_effect_id,
             "reply_parameters": reply_parameters,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("sendMediaGroup", method="POST", data=filtered_payload)
+        response = self._make_request("sendMediaGroup", method="POST", data=payload)
+        return Message.model_validate(response)
 
     def send_location(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         latitude: float,
         longitude: float,
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
         horizontal_accuracy: Optional[float] = None,
-        live_period: Optional[int] = None,
-        heading: Optional[int] = None,
-        proximity_alert_radius: Optional[int] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        live_period: int | None = None,
+        heading: int | None = None,
+        proximity_alert_radius: int | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send a point on the map.
 
@@ -1076,32 +1283,31 @@ class Telegram:
             "reply_parameters": reply_parameters,
             "reply_markup": reply_markup,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("sendLocation", method="POST", data=filtered_payload)
+        response = self._make_request("sendLocation", method="POST", data=payload)
+        return Message.model_validate(response)
 
     def send_venue(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         latitude: float,
         longitude: float,
         title: str,
         address: str,
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        foursquare_id: Optional[str] = None,
-        foursquare_type: Optional[str] = None,
-        google_place_id: Optional[str] = None,
-        google_place_type: Optional[str] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        foursquare_id: str | None = None,
+        foursquare_type: str | None = None,
+        google_place_id: str | None = None,
+        google_place_type: str | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send information about a venue.
 
@@ -1147,28 +1353,27 @@ class Telegram:
             "reply_parameters": reply_parameters,
             "reply_markup": reply_markup,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("sendVenue", method="POST", data=filtered_payload)
+        response = self._make_request("sendVenue", method="POST", data=payload)
+        return Message.model_validate(response)
 
     def send_contact(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         phone_number: str,
         first_name: str,
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        last_name: Optional[str] = None,
-        vcard: Optional[str] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        last_name: str | None = None,
+        vcard: str | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send a phone contact.
 
@@ -1206,36 +1411,46 @@ class Telegram:
             "reply_parameters": reply_parameters,
             "reply_markup": reply_markup,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("sendContact", method="POST", data=filtered_payload)
+        response = self._make_request("sendContact", method="POST", data=payload)
+        return Message.model_validate(response)
 
     def send_poll(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         question: str,
-        options: List[str],
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        question_parse_mode: Optional[str] = None,
-        question_entities: Optional[List[MessageEntity]] = None,
-        is_anonymous: Optional[bool] = None,
-        poll_type: Optional[str] = None,
-        allows_multiple_answers: Optional[bool] = None,
-        correct_option_id: Optional[int] = None,
-        explanation: Optional[str] = None,
-        explanation_parse_mode: Optional[str] = None,
-        explanation_entities: Optional[List[MessageEntity]] = None,
-        open_period: Optional[int] = None,
-        close_date: Optional[int] = None,
-        is_closed: Optional[bool] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        options: List[InputPollOption],
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        question_parse_mode: str | None = None,
+        question_entities: List[MessageEntity] | None = None,
+        is_anonymous: bool | None = None,
+        poll_type: str | None = None,
+        allows_revoting: bool | None = None,
+        shuffle_options: bool | None = None,
+        allows_multiple_answers: bool | None = None,
+        allow_adding_options: bool | None = None,
+        hide_results_until_closes: bool | None = None,
+        members_only: bool | None = None,
+        country_codes: List[str] | None = None,
+        correct_option_ids: List[int] | None = None,
+        explanation: str | None = None,
+        explanation_parse_mode: str | None = None,
+        explanation_entities: List[MessageEntity] | None = None,
+        explanation_media: InputPollMedia | None = None,
+        open_period: int | None = None,
+        close_date: int | None = None,
+        is_closed: bool | None = None,
+        description: str | None = None,
+        description_parse_mode: str | None = None,
+        description_entities: List[MessageEntity] | None = None,
+        media: InputPollMedia | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send a native poll.
 
@@ -1249,15 +1464,26 @@ class Telegram:
         :param question_entities: List of special entities in the question.
         :param is_anonymous: True if the poll is anonymous (default: True).
         :param poll_type: Poll type: "quiz" or "regular" (default: "regular").
+        :param allows_revoting:Pass True, if the poll allows to change chosen answer options, defaults to False for quizzes and to True for regular polls.
+        :param shuffle_options: Pass True, if the poll options must be shown in random order.
         :param allows_multiple_answers: True if multiple answers are allowed (ignored in quiz mode, default: False).
-        :param correct_option_id: 0-based index of the correct answer option (required for quiz mode).
+        :param allow_adding_options: Pass True, if answer options can be added to the poll after creation; not supported for anonymous polls and quizzes.
+        :param hide_results_until_closes: Pass True, if poll results must be shown only after the poll closes.
+        :param members_only: Pass True, if voting is limited to users who have been members of the chat where the poll is being sent for more than 24 hours; for channel chats only.
+        :param country_codes: A JSON-serialized list of 0-12 two-letter ISO 3166-1 alpha-2 country codes indicating the countries from which users can vote in the poll; for channel chats only. Use “FT” as a country code to allow users with anonymous numbers to vote. If omitted or empty, then users from any country can participate in the poll.
+        :param correct_option_ids: Array of 0-based identifiers of the correct answer options. Available only for polls in quiz mode which are closed or were sent (not forwarded) by the bot or to the private chat with the bot.
         :param explanation: Text shown when an incorrect answer is chosen (0–200 characters).
         :param explanation_parse_mode: Mode for parsing entities in the explanation.
         :param explanation_entities: List of special entities in the explanation.
+        :param explanation_media: Media added to the quiz explanation.
         :param open_period: Duration in seconds the poll will be active (5–600). Cannot be used with close_date.
         :param close_date: Unix timestamp when the poll will be automatically closed (5–600 seconds in future).
                         Cannot be used with open_period.
         :param is_closed: Pass True to immediately close the poll (useful for preview).
+        :param description: Description of the poll to be sent, 0-1024 characters after entities parsing.
+        :param description_parse_mode: Mode for parsing entities in the poll description. See formatting options for more details.
+        :param description_entities: A JSON-serialized list of special entities that appear in the poll description, which can be specified instead of description_parse_mode.
+        :param media: Media added to the poll description.
         :param disable_notification: Send message silently without notification sound.
         :param protect_content: Protect message from forwarding and saving.
         :param allow_paid_broadcast: Allow up to 1000 messages/sec for 0.1 Stars per message.
@@ -1268,22 +1494,33 @@ class Telegram:
         """
         payload = {
             "chat_id": chat_id,
+            "question": question,
+            "options": json.dumps(options),
             "business_connection_id": business_connection_id,
             "message_thread_id": message_thread_id,
-            "question": question,
             "question_parse_mode": question_parse_mode,
             "question_entities": question_entities,
-            "options": json.dumps(options),
             "is_anonymous": is_anonymous,
-            "type": poll_type,
+            "poll_type": poll_type,
+            "allows_revoting": allows_revoting,
+            "shuffle_options": shuffle_options,
             "allows_multiple_answers": allows_multiple_answers,
-            "correct_option_id": correct_option_id,
+            "allow_adding_options": allow_adding_options,
+            "hide_results_until_closes": hide_results_until_closes,
+            "members_only": members_only,
+            "country_codes": country_codes,
+            "correct_option_ids": correct_option_ids,
             "explanation": explanation,
             "explanation_parse_mode": explanation_parse_mode,
             "explanation_entities": explanation_entities,
+            "explanation_media": explanation_media,
             "open_period": open_period,
             "close_date": close_date,
             "is_closed": is_closed,
+            "description": description,
+            "description_parse_mode": description_parse_mode,
+            "description_entities": description_entities,
+            "media": media,
             "disable_notification": disable_notification,
             "protect_content": protect_content,
             "allow_paid_broadcast": allow_paid_broadcast,
@@ -1291,21 +1528,20 @@ class Telegram:
             "reply_parameters": reply_parameters,
             "reply_markup": reply_markup,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("sendPoll", method="POST", data=filtered_payload)
+        response = self._make_request("sendPoll", method="POST", data=payload)
+        return Message.model_validate(response)
 
     def send_checklist(
         self,
         business_connection_id: str,
         chat_id: int,
-        checklist: Dict[str, Any],
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None
-    ) -> Dict[Any, Any]:
+        checklist: InputChecklist,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        message_effect_id: str | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Message:
         """
         Send a checklist on behalf of a connected business account.
 
@@ -1329,41 +1565,24 @@ class Telegram:
             "reply_parameters": reply_parameters,
             "reply_markup": reply_markup,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("sendChecklist", method="POST", data=filtered_payload)
-
-
-    def is_join_channel(self, chat_id, user_id, **kwargs):
-        if chat_id.isnumeric():
-            chat_id = chat_id if '@' in chat_id else '@'+str(chat_id)
-        data = {
-            "chat_id": chat_id,
-            "user_id": user_id
-        }
-        data.update(**kwargs)
-        result = self._make_request("getChatMember", method="GET", params=data)
-        if result['ok']:
-            return result['result']['status'] != 'left'
-        else:
-            return False
-
+        response = self._make_request("sendChecklist", method="POST", data=payload)
+        return Message.model_validate(response)
 
     def send_dice(
         self,
-        chat_id: Union[int, str],
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        emoji: Optional[str] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        emoji: str | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send an animated emoji that displays a random value (e.g., dice, target, slot machine).
 
@@ -1395,17 +1614,48 @@ class Telegram:
             "reply_parameters": reply_parameters,
             "reply_markup": reply_markup,
         }
+        response = self._make_request("sendDice", method="POST", data=payload)
+        return Message.model_validate(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("sendDice", method="POST", data=filtered_payload)
+    def send_message_draft(
+        self,
+        chat_id: int | str,
+        draft_id: int,
+        text: str,
+        message_thread_id: int | None = None,
+        parse_mode: str | None = "html",
+        entities: List[MessageEntity] | None = None,
+    ) -> bool:
+        """
+        Use this method to stream a partial message to a user while the message is being generated;
+        supported only for bots with forum topic mode enabled.
+
+        :param chat_id: Unique identifier for the target private chat.
+        :param draft_id: Unique identifier of the message draft; must be non-zero. Changes of drafts with the same identifier are animated.
+        :param text: Text of the message to be sent, 1-4096 characters after entities parsing.
+        :param message_thread_id: Unique identifier for the target message thread.
+        :param parse_mode: Mode for parsing entities in the message text. See formatting options for more details.
+        :param entities: A JSON-serialized list of special entities that appear in message text, which can be specified instead of parse_mode.
+        :return: True on success.
+        """
+        payload = {
+            "chat_id": chat_id,
+            "draft_id": draft_id,
+            "text": text,
+            "message_thread_id": message_thread_id,
+            "parse_mode": parse_mode,
+            "entities": entities,
+        }
+        response = self._make_request("sendMessageDraft", method="POST", data=payload)
+        return bool(response)
 
     def send_chat_action(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         action: str,
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None
-    ) -> Dict[Any, Any]:
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> bool:
         """
         Tell the user that something is happening on the bot's side (e.g., typing, uploading photo).
 
@@ -1430,17 +1680,16 @@ class Telegram:
             "business_connection_id": business_connection_id,
             "message_thread_id": message_thread_id,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("sendChatAction", method="POST", data=filtered_payload)
+        response = self._make_request("sendChatAction", method="POST", data=payload)
+        return bool(response)
 
     def set_message_reaction(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         message_id: int,
-        reaction: Optional[List[Dict[str, Any]]] = None,
-        is_big: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        reaction: List[ReactionType] | None = None,
+        is_big: bool | None = None,
+    ) -> bool:
         """
         Change the chosen reactions on a message.
 
@@ -1456,16 +1705,12 @@ class Telegram:
             "reaction": json.dumps(reaction) if reaction is not None else None,
             "is_big": is_big,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setMessageReaction", method="POST", data=filtered_payload)
+        response = self._make_request("setMessageReaction", method="POST", data=payload)
+        return bool(response)
 
     def get_user_profile_photos(
-        self,
-        user_id: int,
-        offset: Optional[int] = None,
-        limit: Optional[int] = None
-    ) -> Dict[Any, Any]:
+        self, user_id: int, offset: int | None = None, limit: int | None = None
+    ) -> UserProfilePhotos:
         """
         Get a list of profile pictures for a user.
 
@@ -1479,16 +1724,38 @@ class Telegram:
             "offset": offset,
             "limit": limit,
         }
+        response = self._make_request(
+            "getUserProfilePhotos", method="GET", params=payload
+        )
+        return UserProfilePhotos.model_validate(response)
 
-        filtered_params = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("getUserProfilePhotos", method="GET", params=filtered_params)
+    def get_user_profile_audios(
+        self, user_id: int, offset: int | None = None, limit: int | None = None
+    ) -> UserProfileAudios:
+        """
+        Use this method to get a list of profile audios for a user.
+
+        :param user_id: Unique identifier of the target user.
+        :param offset: Sequential number of the first photo to return. Defaults to 0 (all photos).
+        :param limit: Limits the number of photos to retrieve (1–100). Defaults to 100.
+        :return: A UserProfileAudios object.
+        """
+        payload = {
+            "user_id": user_id,
+            "offset": offset,
+            "limit": limit,
+        }
+        response = self._make_request(
+            "getUserProfileAudios", method="GET", params=payload
+        )
+        return UserProfileAudios.model_validate(response)
 
     def set_user_emoji_status(
         self,
         user_id: int,
-        emoji_status_custom_emoji_id: Optional[str] = None,
-        emoji_status_expiration_date: Optional[int] = None
-    ) -> Dict[Any, Any]:
+        emoji_status_custom_emoji_id: str | None = None,
+        emoji_status_expiration_date: int | None = None,
+    ) -> bool:
         """
         Change the emoji status for a user who has granted the bot permission via requestEmojiStatusAccess.
 
@@ -1502,14 +1769,10 @@ class Telegram:
             "emoji_status_custom_emoji_id": emoji_status_custom_emoji_id,
             "emoji_status_expiration_date": emoji_status_expiration_date,
         }
+        response = self._make_request("setUserEmojiStatus", method="POST", data=payload)
+        return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setUserEmojiStatus", method="POST", data=filtered_payload)
-
-    def get_file(
-        self,
-        file_id: str
-    ) -> Dict[Any, Any]:
+    def get_file(self, file_id: str) -> File:
         """
         Get basic information about a file and prepare it for downloading.
 
@@ -1518,15 +1781,31 @@ class Telegram:
                 The link is guaranteed to be valid for at least 1 hour.
         """
         payload = {"file_id": file_id}
-        return self._make_request("getFile", method="GET", params=payload)
+        response = self._make_request("getFile", method="GET", params=payload)
+        return File.model_validate(response)
+
+    def set_chat_member_tag(self, chat_id: int | str, user_id: int, tag: str):
+        """
+        Use this method to set a tag for a regular member in a group or a supergroup.
+        The bot must be an administrator in the chat for this to work and must
+        have the can_manage_tags administrator right.
+
+        :param chat_id: Unique identifier for the target chat or username of the target supergroup in the format @username
+        :param user_id: Unique identifier of the target user.
+        :param tag: New tag for the member; 0-16 characters, emoji are not allowed.
+        :return: True on success.
+        """
+        payload = {"chat_id": chat_id, "user_id": user_id, "tag": tag}
+        response = self._make_request("setChatMemberTag", method="POST", data=payload)
+        return bool(response)
 
     def ban_chat_member(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         user_id: int,
-        until_date: Optional[int] = None,
-        revoke_messages: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        until_date: int | None = None,
+        revoke_messages: bool | None = None,
+    ) -> bool:
         """
         Ban a user in a group, supergroup, or channel.
         In supergroups and channels, the user will not be able to return on their own unless unbanned.
@@ -1548,16 +1827,15 @@ class Telegram:
             "until_date": until_date,
             "revoke_messages": revoke_messages,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("banChatMember", method="POST", data=filtered_payload)
+        response = self._make_request("banChatMember", method="POST", data=payload)
+        return bool(response)
 
     def unban_chat_member(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         user_id: int,
-        only_if_banned: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        only_if_banned: bool | None = None,
+    ) -> bool:
         """
         Unban a previously banned user in a supergroup or channel.
         The user won't rejoin automatically but can use invite links to join.
@@ -1574,18 +1852,17 @@ class Telegram:
             "user_id": user_id,
             "only_if_banned": only_if_banned,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("unbanChatMember", method="POST", data=filtered_payload)
+        response = self._make_request("unbanChatMember", method="POST", data=payload)
+        return bool(response)
 
     def restrict_chat_member(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         user_id: int,
         permissions: Dict[str, Any],
-        use_independent_chat_permissions: Optional[bool] = None,
-        until_date: Optional[int] = None
-    ) -> Dict[Any, Any]:
+        use_independent_chat_permissions: bool | None = None,
+        until_date: int | None = None,
+    ) -> bool:
         """
         Restrict a user in a supergroup.
         The bot must be an administrator with appropriate rights.
@@ -1607,31 +1884,31 @@ class Telegram:
             "use_independent_chat_permissions": use_independent_chat_permissions,
             "until_date": until_date,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("restrictChatMember", method="POST", data=filtered_payload)
+        response = self._make_request("restrictChatMember", method="POST", data=payload)
+        return bool(response)
 
     def promote_chat_member(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         user_id: int,
-        is_anonymous: Optional[bool] = None,
-        can_manage_chat: Optional[bool] = None,
-        can_delete_messages: Optional[bool] = None,
-        can_manage_video_chats: Optional[bool] = None,
-        can_restrict_members: Optional[bool] = None,
-        can_promote_members: Optional[bool] = None,
-        can_change_info: Optional[bool] = None,
-        can_invite_users: Optional[bool] = None,
-        can_post_stories: Optional[bool] = None,
-        can_edit_stories: Optional[bool] = None,
-        can_delete_stories: Optional[bool] = None,
-        can_post_messages: Optional[bool] = None,
-        can_edit_messages: Optional[bool] = None,
-        can_pin_messages: Optional[bool] = None,
-        can_manage_topics: Optional[bool] = None,
-        can_manage_direct_messages: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        is_anonymous: bool | None = None,
+        can_manage_chat: bool | None = None,
+        can_delete_messages: bool | None = None,
+        can_manage_video_chats: bool | None = None,
+        can_restrict_members: bool | None = None,
+        can_promote_members: bool | None = None,
+        can_change_info: bool | None = None,
+        can_invite_users: bool | None = None,
+        can_post_stories: bool | None = None,
+        can_edit_stories: bool | None = None,
+        can_delete_stories: bool | None = None,
+        can_post_messages: bool | None = None,
+        can_edit_messages: bool | None = None,
+        can_pin_messages: bool | None = None,
+        can_manage_topics: bool | None = None,
+        can_manage_direct_messages: bool | None = None,
+        can_manage_tags: bool | None = None,
+    ) -> bool:
         """
         Promote or demote a user in a supergroup or channel.
         The bot must be an administrator with appropriate rights.
@@ -1656,6 +1933,7 @@ class Telegram:
         :param can_pin_messages: True if the admin can pin messages (supergroups only).
         :param can_manage_topics: True if the admin can create, rename, close, and reopen forum topics (supergroups only).
         :param can_manage_direct_messages: True if the admin can manage direct messages of the channel and decline suggested posts (channels only).
+        :param can_manage_tags:Pass True if the administrator can edit the tags of regular members; for groups and supergroups only
         :return: True on success.
         """
         payload = {
@@ -1677,17 +1955,14 @@ class Telegram:
             "can_pin_messages": can_pin_messages,
             "can_manage_topics": can_manage_topics,
             "can_manage_direct_messages": can_manage_direct_messages,
+            "can_manage_tags": can_manage_tags,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("promoteChatMember", method="POST", data=filtered_payload)
+        response = self._make_request("promoteChatMember", method="POST", data=payload)
+        return bool(response)
 
     def set_chat_administrator_custom_title(
-        self,
-        chat_id: Union[int, str],
-        user_id: int,
-        custom_title: str
-    ) -> Dict[Any, Any]:
+        self, chat_id: int | str, user_id: int, custom_title: str
+    ) -> bool:
         """
         Set a custom title for an administrator in a supergroup promoted by the bot.
 
@@ -1701,13 +1976,12 @@ class Telegram:
             "user_id": user_id,
             "custom_title": custom_title,
         }
-        return self._make_request("setChatAdministratorCustomTitle", method="POST", data=payload)
+        response = self._make_request(
+            "setChatAdministratorCustomTitle", method="POST", data=payload
+        )
+        return bool(response)
 
-    def ban_chat_sender_chat(
-        self,
-        chat_id: Union[int, str],
-        sender_chat_id: int
-    ) -> Dict[Any, Any]:
+    def ban_chat_sender_chat(self, chat_id: int | str, sender_chat_id: int) -> bool:
         """
         Ban a channel chat in a supergroup or channel.
         After this, the channel's owner cannot post on behalf of that channel until it's unbanned.
@@ -1721,13 +1995,10 @@ class Telegram:
             "chat_id": chat_id,
             "sender_chat_id": sender_chat_id,
         }
-        return self._make_request("banChatSenderChat", method="POST", data=payload)
+        response = self._make_request("banChatSenderChat", method="POST", data=payload)
+        return bool(response)
 
-    def unban_chat_sender_chat(
-        self,
-        chat_id: Union[int, str],
-        sender_chat_id: int
-    ) -> Dict[Any, Any]:
+    def unban_chat_sender_chat(self, chat_id: int | str, sender_chat_id: int) -> bool:
         """
         Unban a previously banned channel chat in a supergroup or channel.
         The bot must be an administrator with appropriate rights.
@@ -1740,14 +2011,17 @@ class Telegram:
             "chat_id": chat_id,
             "sender_chat_id": sender_chat_id,
         }
-        return self._make_request("unbanChatSenderChat", method="POST", data=payload)
+        response = self._make_request(
+            "unbanChatSenderChat", method="POST", data=payload
+        )
+        return bool(response)
 
     def set_chat_permissions(
         self,
-        chat_id: Union[int, str],
-        permissions: Dict[str, Any],
-        use_independent_chat_permissions: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        permissions: ChatPermissions,
+        use_independent_chat_permissions: bool | None = None,
+    ) -> bool:
         """
         Set default chat permissions for all members in a group or supergroup.
         The bot must be an administrator with can_restrict_members right.
@@ -1763,14 +2037,10 @@ class Telegram:
             "permissions": json.dumps(permissions),
             "use_independent_chat_permissions": use_independent_chat_permissions,
         }
+        response = self._make_request("setChatPermissions", method="POST", data=payload)
+        return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setChatPermissions", method="POST", data=filtered_payload)
-
-    def export_chat_invite_link(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def export_chat_invite_link(self, chat_id: int | str) -> str:
         """
         Generate a new primary invite link for a chat. Any previous primary link is revoked.
         The bot must be an administrator with appropriate rights.
@@ -1780,16 +2050,19 @@ class Telegram:
         :return: The new invite link as a string on success.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("exportChatInviteLink", method="GET", params=payload)
+        response = self._make_request(
+            "exportChatInviteLink", method="GET", params=payload
+        )
+        return str(response)
 
     def create_chat_invite_link(
         self,
-        chat_id: Union[int, str],
-        name: Optional[str] = None,
-        expire_date: Optional[int] = None,
-        member_limit: Optional[int] = None,
-        creates_join_request: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        name: str | None = None,
+        expire_date: int | None = None,
+        member_limit: int | None = None,
+        creates_join_request: bool | None = None,
+    ) -> ChatInviteLink:
         """
         Create a new additional invite link for a chat.
         The link can be edited or revoked using editChatInviteLink or revokeChatInviteLink.
@@ -1810,19 +2083,20 @@ class Telegram:
             "member_limit": member_limit,
             "creates_join_request": creates_join_request,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("createChatInviteLink", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "createChatInviteLink", method="POST", data=payload
+        )
+        return ChatInviteLink.model_validate(response)
 
     def edit_chat_invite_link(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         invite_link: str,
-        name: Optional[str] = None,
-        expire_date: Optional[int] = None,
-        member_limit: Optional[int] = None,
-        creates_join_request: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        name: str | None = None,
+        expire_date: int | None = None,
+        member_limit: int | None = None,
+        creates_join_request: bool | None = None,
+    ) -> ChatInviteLink:
         """
         Edit a non-primary invite link created by the bot.
         The bot must be an administrator with appropriate rights.
@@ -1844,17 +2118,16 @@ class Telegram:
             "member_limit": member_limit,
             "creates_join_request": creates_join_request,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("editChatInviteLink", method="POST", data=filtered_payload)
+        response = self._make_request("editChatInviteLink", method="POST", data=payload)
+        return ChatInviteLink.model_validate(response)
 
     def create_chat_subscription_invite_link(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         subscription_period: int,
         subscription_price: int,
-        name: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        name: str | None = None,
+    ) -> ChatInviteLink:
         """
         Create a subscription invite link for a channel.
         Users must pay Telegram Stars to join via this link.
@@ -1872,16 +2145,14 @@ class Telegram:
             "subscription_period": subscription_period,
             "subscription_price": subscription_price,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("createChatSubscriptionInviteLink", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "createChatSubscriptionInviteLink", method="POST", data=payload
+        )
+        return ChatInviteLink.model_validate(response)
 
     def edit_chat_subscription_invite_link(
-        self,
-        chat_id: Union[int, str],
-        invite_link: str,
-        name: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        self, chat_id: int | str, invite_link: str, name: str | None = None
+    ) -> ChatInviteLink:
         """
         Edit a subscription invite link created by the bot.
         The bot must have the 'can_invite_users' administrator right.
@@ -1896,15 +2167,14 @@ class Telegram:
             "invite_link": invite_link,
             "name": name,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("editChatSubscriptionInviteLink", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "editChatSubscriptionInviteLink", method="POST", data=payload
+        )
+        return ChatInviteLink.model_validate(response)
 
     def revoke_chat_invite_link(
-        self,
-        chat_id: Union[int, str],
-        invite_link: str
-    ) -> Dict[Any, Any]:
+        self, chat_id: int | str, invite_link: str
+    ) -> ChatInviteLink:
         """
         Revoke an invite link created by the bot.
         If the primary link is revoked, a new one is automatically generated.
@@ -1918,13 +2188,12 @@ class Telegram:
             "chat_id": chat_id,
             "invite_link": invite_link,
         }
-        return self._make_request("revokeChatInviteLink", method="POST", data=payload)
+        response = self._make_request(
+            "revokeChatInviteLink", method="POST", data=payload
+        )
+        return ChatInviteLink.model_validate(response)
 
-    def approve_chat_join_request(
-        self,
-        chat_id: Union[int, str],
-        user_id: int
-    ) -> Dict[Any, Any]:
+    def approve_chat_join_request(self, chat_id: int | str, user_id: int) -> bool:
         """
         Approve a user's request to join a chat.
         The bot must be an administrator with the 'can_invite_users' right.
@@ -1937,13 +2206,12 @@ class Telegram:
             "chat_id": chat_id,
             "user_id": user_id,
         }
-        return self._make_request("approveChatJoinRequest", method="POST", data=payload)
+        response = self._make_request(
+            "approveChatJoinRequest", method="POST", data=payload
+        )
+        return bool(response)
 
-    def decline_chat_join_request(
-        self,
-        chat_id: Union[int, str],
-        user_id: int
-    ) -> Dict[Any, Any]:
+    def decline_chat_join_request(self, chat_id: int | str, user_id: int) -> bool:
         """
         Decline a user's request to join a chat.
         The bot must be an administrator with the 'can_invite_users' right.
@@ -1956,13 +2224,51 @@ class Telegram:
             "chat_id": chat_id,
             "user_id": user_id,
         }
-        return self._make_request("declineChatJoinRequest", method="POST", data=payload)
+        response = self._make_request(
+            "declineChatJoinRequest", method="POST", data=payload
+        )
+        return bool(response)
 
-    def set_chat_photo(
-        self,
-        chat_id: Union[int, str],
-        photo: bytes
-    ) -> Dict[Any, Any]:
+    def answer_chat_join_request_query(
+        self, chat_join_request_query_id: str, result: str
+    ) -> bool:
+        """
+        Use this method to process a received chat join request query.
+
+        :param chat_join_request_query_id: Unique identifier of the join request query.
+        :param result: Result of the query. Must be either “approve” to allow the user to join the chat, “decline” to disallow the user to join the chat, or “queue” to leave the decision to other administrators.
+        :return: True on success.
+        """
+        payload = {
+            "chat_join_request_query_id": chat_join_request_query_id,
+            "result": result,
+        }
+        response = self._make_request(
+            "answerChatJoinRequestQuery", method="POST", data=payload
+        )
+        return bool(response)
+
+    def send_chat_join_request_web_app(
+        self, chat_join_request_query_id: str, web_app_url: str
+    ) -> bool:
+        """
+        Use this method to process a received chat join request query by
+        showing a Mini App to the user before deciding the outcome.
+
+        :param chat_join_request_query_id: Unique identifier of the join request query.
+        :param web_app_url: The URL of the Mini App to be opened.
+        :return: True on success.
+        """
+        payload = {
+            "chat_join_request_query_id": chat_join_request_query_id,
+            "web_app_url": web_app_url,
+        }
+        response = self._make_request(
+            "sendChatJoinRequestWebApp", method="POST", data=payload
+        )
+        return bool(response)
+
+    def set_chat_photo(self, chat_id: int | str, photo: bytes) -> bool:
         """
         Set a new profile photo for the chat.
         Not available for private chats.
@@ -1974,12 +2280,12 @@ class Telegram:
         """
         files = {"photo": photo}
         payload = {"chat_id": chat_id}
-        return self._make_request("setChatPhoto", method="POST", data=payload, files=files)
+        response = self._make_request(
+            "setChatPhoto", method="POST", data=payload, files=files
+        )
+        return bool(response)
 
-    def delete_chat_photo(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def delete_chat_photo(self, chat_id: int | str) -> bool:
         """
         Delete the current profile photo of the chat.
         Not available for private chats.
@@ -1989,13 +2295,10 @@ class Telegram:
         :return: True on success.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("deleteChatPhoto", method="POST", data=payload)
+        response = self._make_request("deleteChatPhoto", method="POST", data=payload)
+        return bool(response)
 
-    def set_chat_title(
-        self,
-        chat_id: Union[int, str],
-        title: str
-    ) -> Dict[Any, Any]:
+    def set_chat_title(self, chat_id: int | str, title: str) -> bool:
         """
         Change the title of a chat.
         Not available for private chats.
@@ -2009,13 +2312,12 @@ class Telegram:
             "chat_id": chat_id,
             "title": title,
         }
-        return self._make_request("setChatTitle", method="POST", data=payload)
+        response = self._make_request("setChatTitle", method="POST", data=payload)
+        return bool(response)
 
     def set_chat_description(
-        self,
-        chat_id: Union[int, str],
-        description: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        self, chat_id: int | str, description: str | None = None
+    ) -> bool:
         """
         Change the description of a group, supergroup, or channel.
         The bot must be an administrator with appropriate rights.
@@ -2029,16 +2331,16 @@ class Telegram:
             "description": description,
         }
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setChatDescription", method="POST", data=filtered_payload)
+        response = self._make_request("setChatDescription", method="POST", data=payload)
+        return bool(response)
 
     def pin_chat_message(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         message_id: int,
-        business_connection_id: Optional[str] = None,
-        disable_notification: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        business_connection_id: str | None = None,
+        disable_notification: bool | None = None,
+    ) -> bool:
         """
         Pin a message in a chat.
         In groups and channels, the bot must have 'can_pin_messages' or 'can_edit_messages' rights.
@@ -2056,16 +2358,15 @@ class Telegram:
             "business_connection_id": business_connection_id,
             "disable_notification": disable_notification,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("pinChatMessage", method="POST", data=filtered_payload)
+        response = self._make_request("pinChatMessage", method="POST", data=payload)
+        return bool(response)
 
     def unpin_chat_message(
         self,
-        chat_id: Union[int, str],
-        message_id: Optional[int] = None,
-        business_connection_id: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        message_id: int | None = None,
+        business_connection_id: str | None = None,
+    ) -> bool:
         """
         Unpin a specific message in a chat.
         If message_id is not specified, the most recent pinned message is unpinned.
@@ -2081,14 +2382,10 @@ class Telegram:
             "message_id": message_id,
             "business_connection_id": business_connection_id,
         }
+        response = self._make_request("unpinChatMessage", method="POST", data=payload)
+        return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("unpinChatMessage", method="POST", data=filtered_payload)
-
-    def unpin_all_chat_messages(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def unpin_all_chat_messages(self, chat_id: int | str) -> bool:
         """
         Clear all pinned messages in a chat.
         No special rights needed in private chats or channel direct messages.
@@ -2098,12 +2395,12 @@ class Telegram:
         :return: True on success.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("unpinAllChatMessages", method="POST", data=payload)
+        response = self._make_request(
+            "unpinAllChatMessages", method="POST", data=payload
+        )
+        return bool(response)
 
-    def leave_chat(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def leave_chat(self, chat_id: int | str) -> bool:
         """
         Make the bot leave a group, supergroup, or channel.
         Channel direct messages chats are not supported; leave the corresponding channel instead.
@@ -2112,12 +2409,10 @@ class Telegram:
         :return: True on success.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("leaveChat", method="POST", data=payload)
+        response = self._make_request("leaveChat", method="POST", data=payload)
+        return bool(response)
 
-    def get_chat(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def get_chat(self, chat_id: int | str) -> ChatFullInfo:
         """
         Get up-to-date information about a chat (group, supergroup, channel, or private chat).
         Returns a ChatFullInfo object.
@@ -2126,26 +2421,26 @@ class Telegram:
         :return: A ChatFullInfo object on success.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("getChat", method="GET", params=payload)
+        response = self._make_request("getChat", method="GET", params=payload)
+        return ChatFullInfo.model_validate(response)
 
     def get_chat_administrators(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+        self, chat_id: int | str, return_bots: bool = False
+    ) -> ChatMember:
         """
-        Get a list of administrators in a chat (excluding bots).
-        Returns an array of ChatMember objects.
+        Use this method to get a list of administrators in a chat.
 
         :param chat_id: Unique identifier for the target chat or username (e.g. @channelusername).
+        :param return_bots: Pass True to additionally receive all bots that are administrators of the chat. By default, bots other than the current bot are omitted.
         :return: Array of ChatMember objects on success.
         """
-        payload = {"chat_id": chat_id}
-        return self._make_request("getChatAdministrators", method="GET", params=payload)
+        payload = {"chat_id": chat_id, "return_bots": return_bots}
+        response = self._make_request(
+            "getChatAdministrators", method="GET", params=payload
+        )
+        return ChatMemberAdapter.validate_python(response)
 
-    def get_chat_member_count(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def get_chat_member_count(self, chat_id: int | str) -> int:
         """
         Get the number of members in a chat.
         Returns an integer on success.
@@ -2154,13 +2449,29 @@ class Telegram:
         :return: Number of members in the chat.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("getChatMemberCount", method="GET", params=payload)
+        response = self._make_request(
+            "getChatMemberCount", method="GET", params=payload
+        )
+        return cast(int, response)
 
-    def get_chat_member(
-        self,
-        chat_id: Union[int, str],
-        user_id: int
-    ) -> Dict[Any, Any]:
+    def get_user_personal_chat_messages(
+        self, user_id: int, limit: int
+    ) -> List[Message]:
+        """
+        Use this method to get the last messages from the personal chat
+        (i.e., the chat currently added to their profile) of a given user
+
+        :param user_id: Unique identifier for the target user.
+        :param limit: The maximum number of messages to return; 1-20.
+        :return: Aarray of Message objects is returned.
+        """
+        payload = {"user_id": user_id, "limit": limit}
+        response = self._make_request(
+            "getUserPersonalChatMessages", method="GET", params=payload
+        )
+        return MessageListAdapter.validate_python(response)
+
+    def get_chat_member(self, chat_id: int | str, user_id: int) -> ChatMember:
         """
         Get information about a specific member of a chat.
         Guaranteed to work for other users only if the bot is an administrator.
@@ -2173,13 +2484,10 @@ class Telegram:
             "chat_id": chat_id,
             "user_id": user_id,
         }
-        return self._make_request("getChatMember", method="GET", params=payload)
+        response = self._make_request("getChatMember", method="GET", params=payload)
+        return ChatMemberAdapter.validate_python(response)
 
-    def set_chat_sticker_set(
-        self,
-        chat_id: Union[int, str],
-        sticker_set_name: str
-    ) -> Dict[Any, Any]:
+    def set_chat_sticker_set(self, chat_id: int | str, sticker_set_name: str) -> bool:
         """
         Set a new group sticker set for a supergroup.
         The bot must be an administrator with appropriate rights.
@@ -2193,12 +2501,10 @@ class Telegram:
             "chat_id": chat_id,
             "sticker_set_name": sticker_set_name,
         }
-        return self._make_request("setChatStickerSet", method="POST", data=payload)
+        response = self._make_request("setChatStickerSet", method="POST", data=payload)
+        return bool(response)
 
-    def delete_chat_sticker_set(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def delete_chat_sticker_set(self, chat_id: int | str) -> bool:
         """
         Delete the group sticker set from a supergroup.
         The bot must be an administrator with appropriate rights.
@@ -2208,24 +2514,28 @@ class Telegram:
         :return: True on success.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("deleteChatStickerSet", method="POST", data=payload)
+        response = self._make_request(
+            "deleteChatStickerSet", method="POST", data=payload
+        )
+        return bool(response)
 
-    def get_forum_topic_icon_stickers(self) -> Dict[Any, Any]:
+    def get_forum_topic_icon_stickers(self) -> List[Sticker]:
         """
         Get custom emoji stickers that can be used as forum topic icons by any user.
         This method requires no parameters.
 
         :return: An Array of Sticker objects on success.
         """
-        return self._make_request("getForumTopicIconStickers", method="GET")
+        response = self._make_request("getForumTopicIconStickers", method="GET")
+        return StickerList.validate_python(response)
 
     def create_forum_topic(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         name: str,
-        icon_color: Optional[int] = None,
-        icon_custom_emoji_id: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        icon_color: int | None = None,
+        icon_custom_emoji_id: str | None = None,
+    ) -> ForumTopic:
         """
         Create a new topic in a forum supergroup chat.
         The bot must be an administrator with 'can_manage_topics' rights.
@@ -2245,17 +2555,16 @@ class Telegram:
             "icon_color": icon_color,
             "icon_custom_emoji_id": icon_custom_emoji_id,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("createForumTopic", method="POST", data=filtered_payload)
+        response = self._make_request("createForumTopic", method="POST", data=payload)
+        return ForumTopic.model_validate(response)
 
     def edit_forum_topic(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         message_thread_id: int,
-        name: Optional[str] = None,
-        icon_custom_emoji_id: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        name: str | None = None,
+        icon_custom_emoji_id: str | None = None,
+    ) -> bool:
         """
         Edit the name and/or icon of a forum topic.
         The bot must be an administrator with 'can_manage_topics' rights, unless it's the topic creator.
@@ -2274,15 +2583,10 @@ class Telegram:
             "name": name,
             "icon_custom_emoji_id": icon_custom_emoji_id,
         }
+        response = self._make_request("editForumTopic", method="POST", data=payload)
+        return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("editForumTopic", method="POST", data=filtered_payload)
-
-    def close_forum_topic(
-        self,
-        chat_id: Union[int, str],
-        message_thread_id: int
-    ) -> Dict[Any, Any]:
+    def close_forum_topic(self, chat_id: int | str, message_thread_id: int) -> bool:
         """
         Close an open forum topic.
         The bot must be an administrator with 'can_manage_topics' rights, unless it's the topic creator.
@@ -2295,13 +2599,10 @@ class Telegram:
             "chat_id": chat_id,
             "message_thread_id": message_thread_id,
         }
-        return self._make_request("closeForumTopic", method="POST", data=payload)
+        response = self._make_request("closeForumTopic", method="POST", data=payload)
+        return bool(response)
 
-    def reopen_forum_topic(
-        self,
-        chat_id: Union[int, str],
-        message_thread_id: int
-    ) -> Dict[Any, Any]:
+    def reopen_forum_topic(self, chat_id: int | str, message_thread_id: int) -> bool:
         """
         Reopen a closed forum topic.
         The bot must be an administrator with 'can_manage_topics' rights, unless it's the topic creator.
@@ -2314,13 +2615,10 @@ class Telegram:
             "chat_id": chat_id,
             "message_thread_id": message_thread_id,
         }
-        return self._make_request("reopenForumTopic", method="POST", data=payload)
+        response = self._make_request("reopenForumTopic", method="POST", data=payload)
+        return bool(response)
 
-    def delete_forum_topic(
-        self,
-        chat_id: Union[int, str],
-        message_thread_id: int
-    ) -> Dict[Any, Any]:
+    def delete_forum_topic(self, chat_id: int | str, message_thread_id: int) -> bool:
         """
         Delete a forum topic along with all its messages.
         The bot must be an administrator with 'can_delete_messages' rights.
@@ -2333,13 +2631,12 @@ class Telegram:
             "chat_id": chat_id,
             "message_thread_id": message_thread_id,
         }
-        return self._make_request("deleteForumTopic", method="POST", data=payload)
+        response = self._make_request("deleteForumTopic", method="POST", data=payload)
+        return bool(response)
 
     def unpin_all_forum_topic_messages(
-        self,
-        chat_id: Union[int, str],
-        message_thread_id: int
-    ) -> Dict[Any, Any]:
+        self, chat_id: int | str, message_thread_id: int
+    ) -> bool:
         """
         Clear the list of pinned messages in a specific forum topic.
         The bot must be an administrator with 'can_pin_messages' rights.
@@ -2352,13 +2649,12 @@ class Telegram:
             "chat_id": chat_id,
             "message_thread_id": message_thread_id,
         }
-        return self._make_request("unpinAllForumTopicMessages", method="POST", data=payload)
+        response = self._make_request(
+            "unpinAllForumTopicMessages", method="POST", data=payload
+        )
+        return bool(response)
 
-    def edit_general_forum_topic(
-        self,
-        chat_id: Union[int, str],
-        name: str
-    ) -> Dict[Any, Any]:
+    def edit_general_forum_topic(self, chat_id: int | str, name: str) -> bool:
         """
         Edit the name of the 'General' topic in a forum supergroup.
         The bot must be an administrator with 'can_manage_topics' rights.
@@ -2371,12 +2667,12 @@ class Telegram:
             "chat_id": chat_id,
             "name": name,
         }
-        return self._make_request("editGeneralForumTopic", method="POST", data=payload)
+        response = self._make_request(
+            "editGeneralForumTopic", method="POST", data=payload
+        )
+        return bool(response)
 
-    def close_general_forum_topic(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def close_general_forum_topic(self, chat_id: int | str) -> bool:
         """
         Close the 'General' topic in a forum supergroup.
         The bot must be an administrator with 'can_manage_topics' rights.
@@ -2385,12 +2681,12 @@ class Telegram:
         :return: True on success.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("closeGeneralForumTopic", method="POST", data=payload)
+        response = self._make_request(
+            "closeGeneralForumTopic", method="POST", data=payload
+        )
+        return bool(response)
 
-    def reopen_general_forum_topic(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def reopen_general_forum_topic(self, chat_id: int | str) -> bool:
         """
         Reopen a closed 'General' topic in a forum supergroup.
         The bot must be an administrator with 'can_manage_topics' rights.
@@ -2400,12 +2696,12 @@ class Telegram:
         :return: True on success.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("reopenGeneralForumTopic", method="POST", data=payload)
+        response = self._make_request(
+            "reopenGeneralForumTopic", method="POST", data=payload
+        )
+        return bool(response)
 
-    def hide_general_forum_topic(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def hide_general_forum_topic(self, chat_id: int | str) -> bool:
         """
         Hide the 'General' topic in a forum supergroup.
         The bot must be an administrator with 'can_manage_topics' rights.
@@ -2415,12 +2711,12 @@ class Telegram:
         :return: True on success.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("hideGeneralForumTopic", method="POST", data=payload)
+        response = self._make_request(
+            "hideGeneralForumTopic", method="POST", data=payload
+        )
+        return bool(response)
 
-    def unhide_general_forum_topic(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def unhide_general_forum_topic(self, chat_id: int | str) -> bool:
         """
         Unhide the 'General' topic in a forum supergroup.
         The bot must be an administrator with 'can_manage_topics' rights.
@@ -2429,12 +2725,12 @@ class Telegram:
         :return: True on success.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("unhideGeneralForumTopic", method="POST", data=payload)
+        response = self._make_request(
+            "unhideGeneralForumTopic", method="POST", data=payload
+        )
+        return bool(response)
 
-    def unpin_all_general_forum_topic_messages(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def unpin_all_general_forum_topic_messages(self, chat_id: int | str) -> bool:
         """
         Clear the list of pinned messages in the 'General' forum topic.
         The bot must be an administrator with 'can_pin_messages' rights.
@@ -2443,16 +2739,19 @@ class Telegram:
         :return: True on success.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("unpinAllGeneralForumTopicMessages", method="POST", data=payload)
+        response = self._make_request(
+            "unpinAllGeneralForumTopicMessages", method="POST", data=payload
+        )
+        return bool(response)
 
     def answer_callback_query(
         self,
         callback_query_id: str,
-        text: Optional[str] = None,
-        show_alert: Optional[bool] = None,
-        url: Optional[str] = None,
-        cache_time: Optional[int] = None
-    ) -> Dict[Any, Any]:
+        text: str | None = None,
+        show_alert: bool | None = None,
+        url: str | None = None,
+        cache_time: int | None = None,
+    ) -> bool:
         """
         Send an answer to a callback query sent from an inline keyboard.
         The answer will be displayed to the user as a notification or an alert.
@@ -2472,14 +2771,27 @@ class Telegram:
             "cache_time": cache_time,
         }
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("answerCallbackQuery", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "answerCallbackQuery", method="POST", data=payload
+        )
+        return bool(response)
 
-    def get_user_chat_boosts(
-        self,
-        chat_id: Union[int, str],
-        user_id: int
-    ) -> Dict[Any, Any]:
+    def answer_guest_query(
+        self, guest_query_id: str, result: InlineQueryResult
+    ) -> SentGuestMessage:
+        """
+        Use this method to reply to a received guest message.
+
+        :param guest_query_id: Unique identifier for the query to be answered.
+        :param result: A JSON-serialized object describing the message to be sent.
+        :return: SentGuestMessage object on success.
+        """
+        payload = {"guest_query_id": guest_query_id, "result": result}
+
+        response = self._make_request("answerGuestQuery", method="POST", data=payload)
+        return SentGuestMessage.model_validate(response)
+
+    def get_user_chat_boosts(self, chat_id: int | str, user_id: int) -> UserChatBoosts:
         """
         Get the list of boosts added to a chat by a user.
         The bot must have administrator rights in the chat.
@@ -2492,12 +2804,12 @@ class Telegram:
             "chat_id": chat_id,
             "user_id": user_id,
         }
-        return self._make_request("getUserChatBoosts", method="GET", params=payload)
+        response = self._make_request("getUserChatBoosts", method="GET", params=payload)
+        return UserChatBoosts.model_validate(response)
 
     def get_business_connection(
-        self,
-        business_connection_id: str
-    ) -> Dict[Any, Any]:
+        self, business_connection_id: str
+    ) -> BusinessConnection:
         """
         Get information about the connection of the bot with a business account.
 
@@ -2505,14 +2817,77 @@ class Telegram:
         :return: A BusinessConnection object on success.
         """
         payload = {"business_connection_id": business_connection_id}
-        return self._make_request("getBusinessConnection", method="GET", params=payload)
+        response = self._make_request(
+            "getBusinessConnection", method="GET", params=payload
+        )
+        return BusinessConnection.model_validate(response)
+
+    def get_managed_bot_token(self, user_id: int) -> str:
+        """
+        Use this method to get the token of a managed bot.
+
+        :param user_id: User identifier of the managed bot whose token will be returned.
+        :return: The token as String on success.
+        """
+        payload = {"user_id": user_id}
+        response = self._make_request(
+            "getManagedBotToken", method="GET", params=payload
+        )
+        return str(response)
+
+    def replace_managed_bot_token(self, user_id: int) -> str:
+        """
+        Use this method to revoke the current token of a managed bot and generate a new one.
+
+        :param user_id: User identifier of the managed bot whose token will be replaced.
+        :return: New token as String on success.
+        """
+        payload = {"user_id": user_id}
+        response = self._make_request(
+            "replaceManagedBotToken", method="POST", data=payload
+        )
+        return str(response)
+
+    def get_managed_bot_access_settings(self, user_id: int) -> BotAccessSettings:
+        """
+        Use this method to get the access settings of a managed bot.
+
+        :param user_id: User identifier of the managed bot whose access settings will be returned.
+        :return: BotAccessSettings object on success.
+        """
+        payload = {"user_id": user_id}
+        response = self._make_request(
+            "getManagedBotAccessSettings", method="GET", params=payload
+        )
+        return BotAccessSettings.model_validate(response)
+
+    def set_managed_bot_access_settings(
+        self, user_id: int, is_access_restricted: bool, added_user_ids: List[int]
+    ) -> bool:
+        """
+        Use this method to change the access settings of a managed bot.
+
+        :param user_id: User identifier of the managed bot whose access settings will be changed.
+        :param is_access_restricted: Pass True, if only selected users can access the bot. The bot's owner can always access it.
+        :param added_user_ids: A JSON-serialized list of up to 10 identifiers of users who will have access to the bot in addition to its owner. Ignored if is_access_restricted is false.
+        :return: True on success.
+        """
+        payload = {
+            "user_id": user_id,
+            "is_access_restricted": is_access_restricted,
+            "added_user_ids": added_user_ids,
+        }
+        response = self._make_request(
+            "setManagedBotAccessSettings", method="POST", data=payload
+        )
+        return bool(response)
 
     def set_my_commands(
         self,
-        commands: List[Dict[str, Any]],
-        scope: Optional[Dict[str, Any]] = None,
-        language_code: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        commands: BotCommand,
+        scope: BotCommandScope | None = None,
+        language_code: str | None = None,
+    ) -> bool:
         """
         Change the list of the bot's commands.
 
@@ -2526,15 +2901,14 @@ class Telegram:
             "scope": json.dumps(scope) if scope is not None else None,
             "language_code": language_code,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setMyCommands", method="POST", data=filtered_payload)
+        response = self._make_request("setMyCommands", method="POST", data=payload)
+        return bool(response)
 
     def delete_my_commands(
         self,
-        scope: Optional[Dict[str, Any]] = None,
-        language_code: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        scope: BotCommandScope | None = None,
+        language_code: str | None = None,
+    ) -> bool:
         """
         Delete the list of the bot's commands for the given scope and language.
         After deletion, higher-level commands will be used.
@@ -2547,15 +2921,14 @@ class Telegram:
             "scope": json.dumps(scope) if scope is not None else None,
             "language_code": language_code,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("deleteMyCommands", method="POST", data=filtered_payload)
+        response = self._make_request("deleteMyCommands", method="POST", data=payload)
+        return bool(response)
 
     def get_my_commands(
         self,
-        scope: Optional[Dict[str, Any]] = None,
-        language_code: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        scope: BotCommandScope | None = None,
+        language_code: str | None = None,
+    ) -> List[BotCommand]:
         """
         Get the current list of the bot's commands for the given scope and language.
 
@@ -2568,14 +2941,12 @@ class Telegram:
             "language_code": language_code,
         }
 
-        filtered_params = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("getMyCommands", method="GET", params=filtered_params)
+        response = self._make_request("getMyCommands", method="GET", params=payload)
+        return BotCommandList.validate_python(response)
 
     def set_my_name(
-        self,
-        name: Optional[str] = None,
-        language_code: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        self, name: str | None = None, language_code: str | None = None
+    ) -> bool:
         """
         Change the bot's name.
 
@@ -2587,14 +2958,10 @@ class Telegram:
             "name": name,
             "language_code": language_code,
         }
+        response = self._make_request("setMyName", method="POST", data=payload)
+        return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setMyName", method="POST", data=filtered_payload)
-
-    def get_my_name(
-        self,
-        language_code: Optional[str] = None
-    ) -> Dict[Any, Any]:
+    def get_my_name(self, language_code: str | None = None) -> BotName:
         """
         Get the current bot name for the given user language.
 
@@ -2602,14 +2969,12 @@ class Telegram:
         :return: A BotName object on success.
         """
         payload = {"language_code": language_code}
-        filtered_params = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("getMyName", method="GET", params=filtered_params)
+        response = self._make_request("getMyName", method="GET", params=payload)
+        return BotName.model_validate(response)
 
     def set_my_description(
-        self,
-        description: Optional[str] = None,
-        language_code: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        self, description: str | None = None, language_code: str | None = None
+    ) -> bool:
         """
         Change the bot's description shown in the chat when it's empty.
 
@@ -2622,13 +2987,10 @@ class Telegram:
             "language_code": language_code,
         }
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setMyDescription", method="POST", data=filtered_payload)
+        response = self._make_request("setMyDescription", method="POST", data=payload)
+        return bool(response)
 
-    def get_my_description(
-        self,
-        language_code: Optional[str] = None
-    ) -> Dict[Any, Any]:
+    def get_my_description(self, language_code: str | None = None) -> BotDescription:
         """
         Get the current bot description for the given user language.
 
@@ -2636,14 +2998,14 @@ class Telegram:
         :return: A BotDescription object on success.
         """
         payload = {"language_code": language_code}
-        filtered_params = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("getMyDescription", method="GET", params=filtered_params)
+        response = self._make_request("getMyDescription", method="GET", params=payload)
+        return BotDescription.model_validate(response)
 
     def set_my_short_description(
         self,
-        short_description: Optional[str] = None,
-        language_code: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        short_description: str | None = None,
+        language_code: str | None = None,
+    ) -> bool:
         """
         Change the bot's short description shown on the profile and when shared.
 
@@ -2655,14 +3017,14 @@ class Telegram:
             "short_description": short_description,
             "language_code": language_code,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setMyShortDescription", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "setMyShortDescription", method="POST", data=payload
+        )
+        return bool(response)
 
     def get_my_short_description(
-        self,
-        language_code: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        self, language_code: str | None = None
+    ) -> BotShortDescription:
         """
         Get the current bot short description for the given user language.
 
@@ -2670,14 +3032,37 @@ class Telegram:
         :return: A BotShortDescription object on success.
         """
         payload = {"language_code": language_code}
-        filtered_params = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("getMyShortDescription", method="GET", params=filtered_params)
+
+        response = self._make_request(
+            "getMyShortDescription", method="GET", params=payload
+        )
+        return BotShortDescription.model_validate(response)
+
+    def set_my_profile_photo(self, photo: InputProfilePhoto) -> bool:
+        """
+        Changes the profile photo of the bot.
+
+        :param photo: The new profile photo to set.
+        :return: True on success.
+        """
+        payload = {"photo": photo}
+        response = self._make_request("setMyProfilePhoto", method="POST", data=payload)
+        return bool(response)
+
+    def remove_my_profile_photo(self) -> bool:
+        """
+        Removes the profile photo of the bot. Requires no parameters.
+
+        :return: True on success.
+        """
+        response = self._make_request("removeMyProfilePhoto", method="POST")
+        return bool(response)
 
     def set_chat_menu_button(
         self,
-        chat_id: Optional[int] = None,
-        menu_button: Optional[Dict[str, Any]] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | None = None,
+        menu_button: MenuButton | None = None,
+    ) -> bool:
         """
         Change the bot's menu button in a private chat or the default menu button.
 
@@ -2687,16 +3072,12 @@ class Telegram:
         """
         payload = {
             "chat_id": chat_id,
-            "menu_button": json.dumps(menu_button) if menu_button is not None else None,
+            "menu_button": menu_button,
         }
+        response = self._make_request("setChatMenuButton", method="POST", data=payload)
+        return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setChatMenuButton", method="POST", data=filtered_payload)
-
-    def get_chat_menu_button(
-        self,
-        chat_id: Optional[int] = None
-    ) -> Dict[Any, Any]:
+    def get_chat_menu_button(self, chat_id: int | None = None) -> MenuButton:
         """
         Get the current value of the bot's menu button in a private chat or the default.
 
@@ -2704,14 +3085,14 @@ class Telegram:
         :return: A MenuButton object on success.
         """
         payload = {"chat_id": chat_id}
-        filtered_params = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("getChatMenuButton", method="GET", params=filtered_params)
+        response = self._make_request("getChatMenuButton", method="GET", params=payload)
+        return MenuButtonAdapter.validate_python(response)
 
     def set_my_default_administrator_rights(
         self,
-        rights: Optional[Dict[str, Any]] = None,
-        for_channels: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        rights: ChatAdministratorRights | None = None,
+        for_channels: bool | None = None,
+    ) -> bool:
         """
         Change the default administrator rights requested when the bot is added to groups or channels.
 
@@ -2723,14 +3104,14 @@ class Telegram:
             "rights": json.dumps(rights) if rights is not None else None,
             "for_channels": for_channels,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setMyDefaultAdministratorRights", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "setMyDefaultAdministratorRights", method="POST", data=payload
+        )
+        return bool(response)
 
     def get_my_default_administrator_rights(
-        self,
-        for_channels: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        self, for_channels: bool | None = None
+    ) -> ChatAdministratorRights:
         """
         Get the current default administrator rights of the bot.
 
@@ -2738,27 +3119,30 @@ class Telegram:
         :return: A ChatAdministratorRights object on success.
         """
         payload = {"for_channels": for_channels}
-        filtered_params = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("getMyDefaultAdministratorRights", method="GET", params=filtered_params)
+        response = self._make_request(
+            "getMyDefaultAdministratorRights", method="GET", params=payload
+        )
+        return ChatAdministratorRights.model_validate(response)
 
-    def get_available_gifts(self) -> Dict[Any, Any]:
+    def get_available_gifts(self) -> Gift:
         """
         Get the list of gifts that can be sent by the bot to users and channel chats.
 
         :return: A Gifts object on success.
         """
-        return self._make_request("getAvailableGifts", method="GET")
+        response = self._make_request("getAvailableGifts", method="GET")
+        return Gift.model_validate(response)
 
     def send_gift(
         self,
         gift_id: str,
-        user_id: Optional[int] = None,
-        chat_id: Optional[Union[int, str]] = None,
-        pay_for_upgrade: Optional[bool] = None,
-        text: Optional[str] = None,
-        text_parse_mode: Optional[str] = None,
-        text_entities: Optional[List[MessageEntity]] = None
-    ) -> Dict[Any, Any]:
+        user_id: int | None = None,
+        chat_id: int | str | None = None,
+        pay_for_upgrade: bool | None = None,
+        text: str | None = None,
+        text_parse_mode: str | None = None,
+        text_entities: List[MessageEntity] | None = None,
+    ) -> bool:
         """
         Send a gift to a user or channel chat. The gift cannot be converted to Telegram Stars.
 
@@ -2784,19 +3168,18 @@ class Telegram:
             "text_parse_mode": text_parse_mode,
             "text_entities": text_entities,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("sendGift", method="POST", data=filtered_payload)
+        response = self._make_request("sendGift", method="POST", data=payload)
+        return bool(response)
 
     def gift_premium_subscription(
         self,
         user_id: int,
         month_count: int,
         star_count: int,
-        text: Optional[str] = None,
-        text_parse_mode: Optional[str] = None,
-        text_entities: Optional[List[MessageEntity]] = None
-    ) -> Dict[Any, Any]:
+        text: str | None = None,
+        text_parse_mode: str | None = None,
+        text_entities: List[MessageEntity] | None = None,
+    ) -> bool:
         """
         Gift a Telegram Premium subscription to a user.
 
@@ -2818,15 +3201,12 @@ class Telegram:
             "text_parse_mode": text_parse_mode,
             "text_entities": text_entities,
         }
+        response = self._make_request(
+            "giftPremiumSubscription", method="POST", data=payload
+        )
+        return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("giftPremiumSubscription", method="POST", data=filtered_payload)
-
-    def verify_user(
-        self,
-        user_id: int,
-        custom_description: Optional[str] = None
-    ) -> Dict[Any, Any]:
+    def verify_user(self, user_id: int, custom_description: str | None = None) -> bool:
         """
         Verify a user on behalf of the organization represented by the bot.
 
@@ -2839,15 +3219,12 @@ class Telegram:
             "user_id": user_id,
             "custom_description": custom_description,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("verifyUser", method="POST", data=filtered_payload)
+        response = self._make_request("verifyUser", method="POST", data=payload)
+        return bool(response)
 
     def verify_chat(
-        self,
-        chat_id: Union[int, str],
-        custom_description: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        self, chat_id: int | str, custom_description: str | None = None
+    ) -> bool:
         """
         Verify a chat (e.g., channel) on behalf of the organization represented by the bot.
 
@@ -2860,14 +3237,10 @@ class Telegram:
             "chat_id": chat_id,
             "custom_description": custom_description,
         }
+        response = self._make_request("verifyChat", method="POST", data=payload)
+        return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("verifyChat", method="POST", data=filtered_payload)
-
-    def remove_user_verification(
-        self,
-        user_id: int
-    ) -> Dict[Any, Any]:
+    def remove_user_verification(self, user_id: int) -> bool:
         """
         Remove verification from a user who is currently verified on behalf of the organization.
 
@@ -2875,12 +3248,12 @@ class Telegram:
         :return: True on success.
         """
         payload = {"user_id": user_id}
-        return self._make_request("removeUserVerification", method="POST", data=payload)
+        response = self._make_request(
+            "removeUserVerification", method="POST", data=payload
+        )
+        return bool(response)
 
-    def remove_chat_verification(
-        self,
-        chat_id: Union[int, str]
-    ) -> Dict[Any, Any]:
+    def remove_chat_verification(self, chat_id: int | str) -> bool:
         """
         Remove verification from a chat that is currently verified on behalf of the organization.
 
@@ -2889,14 +3262,14 @@ class Telegram:
         :return: True on success.
         """
         payload = {"chat_id": chat_id}
-        return self._make_request("removeChatVerification", method="POST", data=payload)
+        response = self._make_request(
+            "removeChatVerification", method="POST", data=payload
+        )
+        return bool(response)
 
     def read_business_message(
-        self,
-        business_connection_id: str,
-        chat_id: int,
-        message_id: int
-    ) -> Dict[Any, Any]:
+        self, business_connection_id: str, chat_id: int, message_id: int
+    ) -> bool:
         """
         Mark an incoming message as read on behalf of a connected business account.
         Requires the 'can_read_messages' business bot right.
@@ -2912,13 +3285,14 @@ class Telegram:
             "chat_id": chat_id,
             "message_id": message_id,
         }
-        return self._make_request("readBusinessMessage", method="POST", data=payload)
+        response = self._make_request(
+            "readBusinessMessage", method="POST", data=payload
+        )
+        return bool(response)
 
     def delete_business_messages(
-        self,
-        business_connection_id: str,
-        message_ids: List[int]
-    ) -> Dict[Any, Any]:
+        self, business_connection_id: str, message_ids: List[int]
+    ) -> bool:
         """
         Delete messages on behalf of a business account.
         Requires 'can_delete_sent_messages' to delete own messages, or 'can_delete_all_messages' to delete any message.
@@ -2932,14 +3306,17 @@ class Telegram:
             "business_connection_id": business_connection_id,
             "message_ids": json.dumps(message_ids),
         }
-        return self._make_request("deleteBusinessMessages", method="POST", data=payload)
+        response = self._make_request(
+            "deleteBusinessMessages", method="POST", data=payload
+        )
+        return bool(response)
 
     def set_business_account_name(
         self,
         business_connection_id: str,
         first_name: str,
-        last_name: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        last_name: str | None = None,
+    ) -> bool:
         """
         Change the first and last name of a managed business account.
         Requires the 'can_change_name' business bot right.
@@ -2954,15 +3331,14 @@ class Telegram:
             "first_name": first_name,
             "last_name": last_name,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setBusinessAccountName", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "setBusinessAccountName", method="POST", data=payload
+        )
+        return bool(response)
 
     def set_business_account_username(
-        self,
-        business_connection_id: str,
-        username: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        self, business_connection_id: str, username: str | None = None
+    ) -> bool:
         """
         Change the username of a managed business account.
         Requires the 'can_change_username' business bot right.
@@ -2975,13 +3351,14 @@ class Telegram:
             "business_connection_id": business_connection_id,
             "username": username,
         }
-        return self._make_request("setBusinessAccountUsername", method="POST", data=payload)
+        response = self._make_request(
+            "setBusinessAccountUsername", method="POST", data=payload
+        )
+        return bool(response)
 
     def set_business_account_bio(
-        self,
-        business_connection_id: str,
-        bio: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        self, business_connection_id: str, bio: str | None = None
+    ) -> bool:
         """
         Change the bio (description) of a managed business account.
         Requires the 'can_change_bio' business bot right.
@@ -2994,14 +3371,17 @@ class Telegram:
             "business_connection_id": business_connection_id,
             "bio": bio,
         }
-        return self._make_request("setBusinessAccountBio", method="POST", data=payload)
+        response = self._make_request(
+            "setBusinessAccountBio", method="POST", data=payload
+        )
+        return bool(response)
 
     def set_business_account_profile_photo(
         self,
         business_connection_id: str,
         photo: bytes,
-        is_public: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        is_public: bool | None = None,
+    ) -> bool:
         """
         Change the profile photo of a managed business account.
         Requires the 'can_edit_profile_photo' business bot right.
@@ -3017,15 +3397,17 @@ class Telegram:
             "business_connection_id": business_connection_id,
             "is_public": is_public,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setBusinessAccountProfilePhoto", method="POST", data=filtered_payload, files=files)
+        response = self._make_request(
+            "setBusinessAccountProfilePhoto",
+            method="POST",
+            data=payload,
+            files=files,
+        )
+        return bool(response)
 
     def remove_business_account_profile_photo(
-        self,
-        business_connection_id: str,
-        is_public: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        self, business_connection_id: str, is_public: bool | None = None
+    ) -> bool:
         """
         Remove the current profile photo of a managed business account.
         Requires the 'can_edit_profile_photo' business bot right.
@@ -3039,16 +3421,17 @@ class Telegram:
             "business_connection_id": business_connection_id,
             "is_public": is_public,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("removeBusinessAccountProfilePhoto", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "removeBusinessAccountProfilePhoto", method="POST", data=payload
+        )
+        return bool(response)
 
     def set_business_account_gift_settings(
         self,
         business_connection_id: str,
         show_gift_button: bool,
-        accepted_gift_types: Dict[str, Any]
-    ) -> Dict[Any, Any]:
+        accepted_gift_types: Dict[str, Any],
+    ) -> bool:
         """
         Change the privacy settings for incoming gifts in a managed business account.
         Requires the 'can_change_gift_settings' business bot right.
@@ -3063,12 +3446,14 @@ class Telegram:
             "show_gift_button": show_gift_button,
             "accepted_gift_types": json.dumps(accepted_gift_types),
         }
-        return self._make_request("setBusinessAccountGiftSettings", method="POST", data=payload)
+        response = self._make_request(
+            "setBusinessAccountGiftSettings", method="POST", data=payload
+        )
+        return bool(response)
 
     def get_business_account_star_balance(
-        self,
-        business_connection_id: str
-    ) -> Dict[Any, Any]:
+        self, business_connection_id: str
+    ) -> AcceptedGiftTypes:
         """
         Get the amount of Telegram Stars owned by a managed business account.
         Requires the 'can_view_gifts_and_stars' business bot right.
@@ -3077,13 +3462,14 @@ class Telegram:
         :return: A StarAmount object on success.
         """
         payload = {"business_connection_id": business_connection_id}
-        return self._make_request("getBusinessAccountStarBalance", method="GET", params=payload)
+        response = self._make_request(
+            "getBusinessAccountStarBalance", method="GET", params=payload
+        )
+        return AcceptedGiftTypes.model_validate(response)
 
     def transfer_business_account_stars(
-        self,
-        business_connection_id: str,
-        star_count: int
-    ) -> Dict[Any, Any]:
+        self, business_connection_id: str, star_count: int
+    ) -> bool:
         """
         Transfer Telegram Stars from the business account balance to the bot's balance.
         Requires the 'can_transfer_stars' business bot right.
@@ -3096,20 +3482,23 @@ class Telegram:
             "business_connection_id": business_connection_id,
             "star_count": star_count,
         }
-        return self._make_request("transferBusinessAccountStars", method="POST", data=payload)
+        response = self._make_request(
+            "transferBusinessAccountStars", method="POST", data=payload
+        )
+        return bool(response)
 
     def get_business_account_gifts(
         self,
         business_connection_id: str,
-        exclude_unsaved: Optional[bool] = None,
-        exclude_saved: Optional[bool] = None,
-        exclude_unlimited: Optional[bool] = None,
-        exclude_limited: Optional[bool] = None,
-        exclude_unique: Optional[bool] = None,
-        sort_by_price: Optional[bool] = None,
-        offset: Optional[str] = None,
-        limit: Optional[int] = None
-    ) -> Dict[Any, Any]:
+        exclude_unsaved: bool | None = None,
+        exclude_saved: bool | None = None,
+        exclude_unlimited: bool | None = None,
+        exclude_limited: bool | None = None,
+        exclude_unique: bool | None = None,
+        sort_by_price: bool | None = None,
+        offset: str | None = None,
+        limit: int | None = None,
+    ) -> OwnedGift:
         """
         Get the list of gifts received and owned by a managed business account.
         Requires the 'can_view_gifts_and_stars' business bot right.
@@ -3136,15 +3525,14 @@ class Telegram:
             "offset": offset,
             "limit": limit,
         }
-
-        filtered_params = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("getBusinessAccountGifts", method="GET", params=filtered_params)
+        response = self._make_request(
+            "getBusinessAccountGifts", method="GET", params=payload
+        )
+        return OwnedGiftAdapter.validate_python(response)
 
     def convert_gift_to_stars(
-        self,
-        business_connection_id: str,
-        owned_gift_id: str
-    ) -> Dict[Any, Any]:
+        self, business_connection_id: str, owned_gift_id: str
+    ) -> bool:
         """
         Convert a regular gift to Telegram Stars.
         Requires the 'can_convert_gifts_to_stars' business bot right.
@@ -3157,15 +3545,16 @@ class Telegram:
             "business_connection_id": business_connection_id,
             "owned_gift_id": owned_gift_id,
         }
-        return self._make_request("convertGiftToStars", method="POST", data=payload)
+        response = self._make_request("convertGiftToStars", method="POST", data=payload)
+        return bool(response)
 
     def upgrade_gift(
         self,
         business_connection_id: str,
         owned_gift_id: str,
-        keep_original_details: Optional[bool] = None,
-        star_count: Optional[int] = None
-    ) -> Dict[Any, Any]:
+        keep_original_details: bool | None = None,
+        star_count: int | None = None,
+    ) -> bool:
         """
         Upgrade a regular gift to a unique gift.
         Requires the 'can_transfer_and_upgrade_gifts' business bot right.
@@ -3184,17 +3573,16 @@ class Telegram:
             "keep_original_details": keep_original_details,
             "star_count": star_count,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("upgradeGift", method="POST", data=filtered_payload)
+        response = self._make_request("upgradeGift", method="POST", data=payload)
+        return bool(response)
 
     def transfer_gift(
         self,
         business_connection_id: str,
         owned_gift_id: str,
         new_owner_chat_id: int,
-        star_count: Optional[int] = None
-    ) -> Dict[Any, Any]:
+        star_count: int | None = None,
+    ) -> bool:
         """
         Transfer an owned unique gift to another user.
         Requires the 'can_transfer_and_upgrade_gifts' business bot right.
@@ -3212,22 +3600,21 @@ class Telegram:
             "new_owner_chat_id": new_owner_chat_id,
             "star_count": star_count,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("transferGift", method="POST", data=filtered_payload)
+        response = self._make_request("transferGift", method="POST", data=payload)
+        return bool(response)
 
     def post_story(
         self,
         business_connection_id: str,
-        content: Dict[str, Any],
+        content: InputStoryContent,
         active_period: int,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        areas: Optional[List[Dict[str, Any]]] = None,
-        post_to_chat_page: Optional[bool] = None,
-        protect_content: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        caption_entities: List[MessageEntity] | None = None,
+        areas: List[StoryArea] | None = None,
+        post_to_chat_page: bool | None = None,
+        protect_content: bool | None = None,
+    ) -> Story:
         """
         Post a story on behalf of a managed business account.
         Requires the 'can_manage_stories' business bot right.
@@ -3254,20 +3641,19 @@ class Telegram:
             "post_to_chat_page": post_to_chat_page,
             "protect_content": protect_content,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("postStory", method="POST", data=filtered_payload)
+        response = self._make_request("postStory", method="POST", data=payload)
+        return Story.model_validate(response)
 
     def edit_story(
         self,
         business_connection_id: str,
         story_id: int,
-        content: Dict[str, Any],
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        areas: Optional[List[Dict[str, Any]]] = None
-    ) -> Dict[Any, Any]:
+        content: InputStoryContent,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        caption_entities: List[MessageEntity] | None = None,
+        areas: List[StoryArea] | None = None,
+    ) -> Story:
         """
         Edit a story previously posted by the bot on behalf of a managed business account.
         Requires the 'can_manage_stories' business bot right.
@@ -3290,15 +3676,10 @@ class Telegram:
             "caption_entities": caption_entities,
             "areas": json.dumps(areas) if areas is not None else None,
         }
+        response = self._make_request("editStory", method="POST", data=payload)
+        return Story.model_validate(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("editStory", method="POST", data=filtered_payload)
-
-    def delete_story(
-        self,
-        business_connection_id: str,
-        story_id: int
-    ) -> Dict[Any, Any]:
+    def delete_story(self, business_connection_id: str, story_id: int) -> bool:
         """
         Delete a story previously posted by the bot on behalf of a managed business account.
         Requires the 'can_manage_stories' business bot right.
@@ -3311,20 +3692,22 @@ class Telegram:
             "business_connection_id": business_connection_id,
             "story_id": story_id,
         }
-        return self._make_request("deleteStory", method="POST", data=payload)
+        response = self._make_request("deleteStory", method="POST", data=payload)
+        return bool(response)
 
     def edit_message_text(
         self,
         text: str,
-        business_connection_id: Optional[str] = None,
-        chat_id: Optional[Union[int, str]] = None,
-        message_id: Optional[int] = None,
-        inline_message_id: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        entities: Optional[List[MessageEntity]] = None,
-        link_preview_options: Optional[LinkPreviewOptions] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None
-    ) -> Dict[Any, Any]:
+        business_connection_id: str | None = None,
+        chat_id: int | str | None = None,
+        message_id: int | None = None,
+        inline_message_id: str | None = None,
+        parse_mode: str | None = None,
+        entities: List[MessageEntity] | None = None,
+        link_preview_options: LinkPreviewOptions | None = None,
+        rich_message: InputRichMessage | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Message | bool:
         """
         Edit the text and game messages.
 
@@ -3337,11 +3720,14 @@ class Telegram:
         :param parse_mode: Mode for parsing entities in the message text ('HTML', 'MarkdownV2').
         :param entities: List of special entities in the message text (can be used instead of parse_mode).
         :param link_preview_options: Options for link preview generation.
+        :param: rich_message: New rich content of the message; required if text isn't specified.
         :param reply_markup: A JSON-serialized object for a new inline keyboard.
         :return: The edited Message object if not an inline message, otherwise True on success.
         """
         if not (chat_id and message_id) and not inline_message_id:
-            raise ValueError("Either (chat_id and message_id) or inline_message_id must be provided.")
+            raise ValueError(
+                "Either (chat_id and message_id) or inline_message_id must be provided."
+            )
 
         payload = {
             "business_connection_id": business_connection_id,
@@ -3352,24 +3738,27 @@ class Telegram:
             "parse_mode": parse_mode,
             "entities": entities,
             "link_preview_options": link_preview_options,
+            "rich_message": rich_message,
             "reply_markup": reply_markup,
         }
+        response = self._make_request("editMessageText", method="POST", data=payload)
+        if isinstance(response, bool):
+            return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("editMessageText", method="POST", data=filtered_payload)
+        return Message.model_validate(response)
 
     def edit_message_caption(
         self,
-        business_connection_id: Optional[str] = None,
-        chat_id: Optional[Union[int, str]] = None,
-        message_id: Optional[int] = None,
-        inline_message_id: Optional[str] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None
-    ) -> Dict[Any, Any]:
+        business_connection_id: str | None = None,
+        chat_id: int | str | None = None,
+        message_id: int | None = None,
+        inline_message_id: str | None = None,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        caption_entities: List[MessageEntity] | None = None,
+        show_caption_above_media: bool | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Message | bool:
         """
         Edit the caption of messages.
 
@@ -3386,7 +3775,9 @@ class Telegram:
         :return: The edited Message object if not an inline message, otherwise True on success.
         """
         if not (chat_id and message_id) and not inline_message_id:
-            raise ValueError("Either (chat_id and message_id) or inline_message_id must be provided.")
+            raise ValueError(
+                "Either (chat_id and message_id) or inline_message_id must be provided."
+            )
 
         payload = {
             "business_connection_id": business_connection_id,
@@ -3399,19 +3790,21 @@ class Telegram:
             "show_caption_above_media": show_caption_above_media,
             "reply_markup": reply_markup,
         }
+        response = self._make_request("editMessageCaption", method="POST", data=payload)
+        if isinstance(response, bool):
+            return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("editMessageCaption", method="POST", data=filtered_payload)
+        return Message.model_validate(response)
 
     def edit_message_media(
         self,
-        media: Dict[str, Any],
-        business_connection_id: Optional[str] = None,
-        chat_id: Optional[Union[int, str]] = None,
-        message_id: Optional[int] = None,
-        inline_message_id: Optional[str] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None
-    ) -> Dict[Any, Any]:
+        media: InputMedia,
+        business_connection_id: str | None = None,
+        chat_id: int | str | None = None,
+        message_id: int | None = None,
+        inline_message_id: str | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Message | bool:
         """
         Edit the media content of a message (animation, audio, document, photo, video) or add media to a text message.
 
@@ -3427,7 +3820,9 @@ class Telegram:
         :return: The edited Message object if not an inline message, otherwise True on success.
         """
         if not (chat_id and message_id) and not inline_message_id:
-            raise ValueError("Either (chat_id and message_id) or inline_message_id must be provided.")
+            raise ValueError(
+                "Either (chat_id and message_id) or inline_message_id must be provided."
+            )
 
         payload = {
             "business_connection_id": business_connection_id,
@@ -3437,24 +3832,26 @@ class Telegram:
             "media": json.dumps(media),
             "reply_markup": reply_markup,
         }
+        response = self._make_request("editMessageMedia", method="POST", data=payload)
+        if isinstance(response, bool):
+            return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("editMessageMedia", method="POST", data=filtered_payload)
+        return Message.model_validate(response)
 
     def edit_message_live_location(
         self,
         latitude: float,
         longitude: float,
-        business_connection_id: Optional[str] = None,
-        chat_id: Optional[Union[int, str]] = None,
-        message_id: Optional[int] = None,
-        inline_message_id: Optional[str] = None,
-        live_period: Optional[int] = None,
+        business_connection_id: str | None = None,
+        chat_id: int | str | None = None,
+        message_id: int | None = None,
+        inline_message_id: str | None = None,
+        live_period: int | None = None,
         horizontal_accuracy: Optional[float] = None,
-        heading: Optional[int] = None,
-        proximity_alert_radius: Optional[int] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None
-    ) -> Dict[Any, Any]:
+        heading: int | None = None,
+        proximity_alert_radius: int | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Message | bool:
         """
         Edit live location messages.
 
@@ -3476,7 +3873,9 @@ class Telegram:
         :return: The edited Message object if not an inline message, otherwise True on success.
         """
         if not (chat_id and message_id) and not inline_message_id:
-            raise ValueError("Either (chat_id and message_id) or inline_message_id must be provided.")
+            raise ValueError(
+                "Either (chat_id and message_id) or inline_message_id must be provided."
+            )
 
         payload = {
             "business_connection_id": business_connection_id,
@@ -3492,17 +3891,22 @@ class Telegram:
             "reply_markup": reply_markup,
         }
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("editMessageLiveLocation", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "editMessageLiveLocation", method="POST", data=payload
+        )
+        if isinstance(response, bool):
+            return bool(response)
+
+        return Message.model_validate(response)
 
     def stop_message_live_location(
         self,
-        business_connection_id: Optional[str] = None,
-        chat_id: Optional[Union[int, str]] = None,
-        message_id: Optional[int] = None,
-        inline_message_id: Optional[str] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None
-    ) -> Dict[Any, Any]:
+        business_connection_id: str | None = None,
+        chat_id: int | str | None = None,
+        message_id: int | None = None,
+        inline_message_id: str | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Message | bool:
         """
         Stop updating a live location message before live_period expires.
 
@@ -3515,7 +3919,9 @@ class Telegram:
         :return: The edited Message object if not an inline message, otherwise True on success.
         """
         if not (chat_id and message_id) and not inline_message_id:
-            raise ValueError("Either (chat_id and message_id) or inline_message_id must be provided.")
+            raise ValueError(
+                "Either (chat_id and message_id) or inline_message_id must be provided."
+            )
 
         payload = {
             "business_connection_id": business_connection_id,
@@ -3524,9 +3930,13 @@ class Telegram:
             "inline_message_id": inline_message_id,
             "reply_markup": reply_markup,
         }
+        response = self._make_request(
+            "stopMessageLiveLocation", method="POST", data=payload
+        )
+        if isinstance(response, bool):
+            return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("stopMessageLiveLocation", method="POST", data=filtered_payload)
+        return Message.model_validate(response)
 
     def edit_message_checklist(
         self,
@@ -3534,8 +3944,8 @@ class Telegram:
         chat_id: int,
         message_id: int,
         checklist: Dict[str, Any],
-        reply_markup: Optional[InlineKeyboardMarkup] = None
-    ) -> Dict[Any, Any]:
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Message | bool:
         """
         Edit a checklist on behalf of a connected business account.
 
@@ -3553,18 +3963,22 @@ class Telegram:
             "checklist": json.dumps(checklist),
             "reply_markup": reply_markup,
         }
+        response = self._make_request(
+            "editMessageChecklist", method="POST", data=payload
+        )
+        if isinstance(response, bool):
+            return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("editMessageChecklist", method="POST", data=filtered_payload)
+        return Message.model_validate(response)
 
     def edit_message_reply_markup(
         self,
-        business_connection_id: Optional[str] = None,
-        chat_id: Optional[Union[int, str]] = None,
-        message_id: Optional[int] = None,
-        inline_message_id: Optional[str] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None
-    ) -> Dict[Any, Any]:
+        business_connection_id: str | None = None,
+        chat_id: int | str | None = None,
+        message_id: int | None = None,
+        inline_message_id: str | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Message | bool:
         """
         Edit only the reply markup (inline keyboard) of a message.
 
@@ -3577,7 +3991,9 @@ class Telegram:
         :return: The edited Message object if not an inline message, otherwise True on success.
         """
         if not (chat_id and message_id) and not inline_message_id:
-            raise ValueError("Either (chat_id and message_id) or inline_message_id must be provided.")
+            raise ValueError(
+                "Either (chat_id and message_id) or inline_message_id must be provided."
+            )
 
         payload = {
             "business_connection_id": business_connection_id,
@@ -3586,17 +4002,21 @@ class Telegram:
             "inline_message_id": inline_message_id,
             "reply_markup": reply_markup,
         }
+        response = self._make_request(
+            "editMessageReplyMarkup", method="POST", data=payload
+        )
+        if isinstance(response, bool):
+            return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("editMessageReplyMarkup", method="POST", data=filtered_payload)
+        return Message.model_validate(response)
 
     def stop_poll(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         message_id: int,
-        business_connection_id: Optional[str] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None
-    ) -> Dict[Any, Any]:
+        business_connection_id: str | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Poll:
         """
         Stop a poll that was sent by the bot.
         On success, the stopped Poll object is returned.
@@ -3613,16 +4033,12 @@ class Telegram:
             "business_connection_id": business_connection_id,
             "reply_markup": reply_markup,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("stopPoll", method="POST", data=filtered_payload)
+        response = self._make_request("stopPoll", method="POST", data=payload)
+        return Poll.model_validate(response)
 
     def approve_suggested_post(
-        self,
-        chat_id: int,
-        message_id: int,
-        send_date: Optional[int] = None
-    ) -> Dict[Any, Any]:
+        self, chat_id: int, message_id: int, send_date: int | None = None
+    ) -> bool:
         """
         Approve a suggested post in a direct messages chat.
         The bot must have the 'can_post_messages' administrator right in the corresponding channel chat.
@@ -3639,16 +4055,14 @@ class Telegram:
             "message_id": message_id,
             "send_date": send_date,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("approveSuggestedPost", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "approveSuggestedPost", method="POST", data=payload
+        )
+        return bool(response)
 
     def decline_suggested_post(
-        self,
-        chat_id: int,
-        message_id: int,
-        comment: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        self, chat_id: int, message_id: int, comment: str | None = None
+    ) -> bool:
         """
         Decline a suggested post in a direct messages chat.
         The bot must have the 'can_manage_direct_messages' administrator right in the corresponding channel chat.
@@ -3663,15 +4077,12 @@ class Telegram:
             "message_id": message_id,
             "comment": comment,
         }
+        response = self._make_request(
+            "declineSuggestedPost", method="POST", data=payload
+        )
+        return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("declineSuggestedPost", method="POST", data=filtered_payload)
-
-    def delete_message(
-        self,
-        chat_id: Union[int, str],
-        message_id: int
-    ) -> Dict[Any, Any]:
+    def delete_message(self, chat_id: int | str, message_id: int) -> bool:
         """
         Delete a message, including service messages, with the following limitations:
         - The message must have been sent less than 48 hours ago.
@@ -3692,13 +4103,10 @@ class Telegram:
             "chat_id": chat_id,
             "message_id": message_id,
         }
-        return self._make_request("deleteMessage", method="POST", data=payload)
+        response = self._make_request("deleteMessage", method="POST", data=payload)
+        return bool(response)
 
-    def delete_messages(
-        self,
-        chat_id: Union[int, str],
-        message_ids: List[int]
-    ) -> Dict[Any, Any]:
+    def delete_messages(self, chat_id: int | str, message_ids: List[int]) -> bool:
         """
         Delete multiple messages simultaneously.
         If some messages can't be found or deleted, they are simply skipped.
@@ -3712,24 +4120,71 @@ class Telegram:
             "chat_id": chat_id,
             "message_ids": json.dumps(message_ids),
         }
-        return self._make_request("deleteMessages", method="POST", data=payload)
+        response = self._make_request("deleteMessages", method="POST", data=payload)
+        return bool(response)
+
+    def delete_message_reaction(
+        self, chat_id: int | str, message_id: int, user_id: int, actor_chat_id: int
+    ) -> bool:
+        """
+        Use this method to remove a reaction from a message in a group or a supergroup chat.
+        The bot must have the 'can_delete_messages' administrator right in the chat.
+
+        :param chat_id: Unique identifier for the target chat or username of the target channel (e.g. @channelusername).
+        :param message_id: A list of 1–100 message identifiers to delete. See delete_message() for limitations on deletable messages.
+        :param user_id: Identifier of the user whose reaction will be removed, if the reaction was added by a user.
+        :param actor_chat_id: Identifier of the chat whose reaction will be removed, if the reaction was added by a chat.
+        :return: True on success.
+        """
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "user_id": user_id,
+            "actor_chat_id": actor_chat_id,
+        }
+        response = self._make_request(
+            "deleteMessageReaction", method="POST", data=payload
+        )
+        return bool(response)
+
+    def delete_message_reactions(
+        self, chat_id: int | str, user_id: int, actor_chat_id: int
+    ) -> bool:
+        """
+        Use this method to remove up to 10000 recent reactions in a group or a supergroup chat added by a given user or chat.
+        The bot must have the 'can_delete_messages' administrator right in the chat.
+
+        :param chat_id: Unique identifier for the target chat or username of the target supergroup in the format @username.
+        :param user_id: Identifier of the user whose reactions will be removed, if the reactions were added by a user.
+        :param actor_chat_id: Identifier of the chat whose reactions will be removed, if the reactions were added by a chat.
+        :return: True on success.
+        """
+        payload = {
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "actor_chat_id": actor_chat_id,
+        }
+        response = self._make_request(
+            "deleteAllMessageReactions", method="POST", data=payload
+        )
+        return bool(response)
 
     def send_sticker(
         self,
-        chat_id: Union[int, str],
-        sticker: Union[str, bytes],
-        business_connection_id: Optional[str] = None,
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        emoji: Optional[str] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[ReplyMarkup] = None
-    ) -> Dict[Any, Any]:
+        chat_id: int | str,
+        sticker: str | bytes,
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        emoji: str | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
         """
         Send static .WEBP, animated .TGS, or video .WEBM stickers.
         On success, the sent Message is returned.
@@ -3767,23 +4222,21 @@ class Telegram:
             "reply_parameters": reply_parameters,
             "reply_markup": reply_markup,
         }
-
         if isinstance(sticker, bytes):
             # Upload new sticker → use POST + multipart/form-data
             files = {"sticker": sticker}
             payload["sticker"] = None
-            filtered_payload = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendSticker", method="POST", data=filtered_payload, files=files)
+            response = self._make_request(
+                "sendSticker", method="POST", data=payload, files=files
+            )
         else:
             # Reuse existing file_id or URL → use POST (GET not supported for stickers)
             payload["sticker"] = sticker
-            filtered_payload = {k: v for k, v in payload.items() if v is not None}
-            return self._make_request("sendSticker", method="POST", data=filtered_payload)
+            response = self._make_request("sendSticker", method="POST", data=payload)
 
-    def get_sticker_set(
-        self,
-        name: str
-    ) -> Dict[Any, Any]:
+        return Message.model_validate(response)
+
+    def get_sticker_set(self, name: str) -> StickerSet:
         """
         Get information about a sticker set.
 
@@ -3791,12 +4244,10 @@ class Telegram:
         :return: A StickerSet object on success.
         """
         payload = {"name": name}
-        return self._make_request("getStickerSet", method="GET", params=payload)
+        response = self._make_request("getStickerSet", method="GET", params=payload)
+        return StickerSet.model_validate(response)
 
-    def get_custom_emoji_stickers(
-        self,
-        custom_emoji_ids: List[str]
-    ) -> Dict[Any, Any]:
+    def get_custom_emoji_stickers(self, custom_emoji_ids: List[str]) -> Sticker:
         """
         Get information about custom emoji stickers by their identifiers.
 
@@ -3804,14 +4255,14 @@ class Telegram:
         :return: An Array of Sticker objects on success.
         """
         payload = {"custom_emoji_ids": json.dumps(custom_emoji_ids)}
-        return self._make_request("getCustomEmojiStickers", method="POST", data=payload)
+        response = self._make_request(
+            "getCustomEmojiStickers", method="POST", data=payload
+        )
+        return Sticker.model_validate(response)
 
     def upload_sticker_file(
-        self,
-        user_id: int,
-        sticker: bytes,
-        sticker_format: str
-    ) -> Dict[Any, Any]:
+        self, user_id: int, sticker: bytes, sticker_format: str
+    ) -> File:
         """
         Upload a sticker file for later use in creating or editing sticker sets.
         The file can be reused multiple times.
@@ -3827,17 +4278,20 @@ class Telegram:
             "user_id": user_id,
             "sticker_format": sticker_format,
         }
-        return self._make_request("uploadStickerFile", method="POST", data=payload, files=files)
+        response = self._make_request(
+            "uploadStickerFile", method="POST", data=payload, files=files
+        )
+        return File.model_validate(response)
 
     def create_new_sticker_set(
         self,
         user_id: int,
         name: str,
         title: str,
-        stickers: List[Dict[str, Any]],
-        sticker_type: Optional[str] = None,
-        needs_repainting: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        stickers: List[InputSticker],
+        sticker_type: str | None = None,
+        needs_repainting: bool | None = None,
+    ) -> bool:
         """
         Create a new sticker set owned by a user. The bot will be able to edit this set.
 
@@ -3857,16 +4311,14 @@ class Telegram:
             "sticker_type": sticker_type,
             "needs_repainting": needs_repainting,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("createNewStickerSet", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "createNewStickerSet", method="POST", data=payload
+        )
+        return bool(response)
 
     def add_sticker_to_set(
-        self,
-        user_id: int,
-        name: str,
-        sticker: Dict[str, Any]
-    ) -> Dict[Any, Any]:
+        self, user_id: int, name: str, sticker: InputSticker
+    ) -> bool:
         """
         Add a new sticker to a set created by the bot.
         - Regular/mask sets: up to 120 stickers.
@@ -3883,13 +4335,10 @@ class Telegram:
             "name": name,
             "sticker": json.dumps(sticker),
         }
-        return self._make_request("addStickerToSet", method="POST", data=payload)
+        response = self._make_request("addStickerToSet", method="POST", data=payload)
+        return bool(response)
 
-    def set_sticker_position_in_set(
-        self,
-        sticker: str,
-        position: int
-    ) -> Dict[Any, Any]:
+    def set_sticker_position_in_set(self, sticker: str, position: int) -> bool:
         """
         Move a sticker in a bot-created set to a specific position (zero-based index).
 
@@ -3901,12 +4350,12 @@ class Telegram:
             "sticker": sticker,
             "position": position,
         }
-        return self._make_request("setStickerPositionInSet", method="POST", data=payload)
+        response = self._make_request(
+            "setStickerPositionInSet", method="POST", data=payload
+        )
+        return bool(response)
 
-    def delete_sticker_from_set(
-        self,
-        sticker: str
-    ) -> Dict[Any, Any]:
+    def delete_sticker_from_set(self, sticker: str) -> bool:
         """
         Delete a sticker from a set created by the bot.
 
@@ -3914,15 +4363,14 @@ class Telegram:
         :return: True on success.
         """
         payload = {"sticker": sticker}
-        return self._make_request("deleteStickerFromSet", method="POST", data=payload)
+        response = self._make_request(
+            "deleteStickerFromSet", method="POST", data=payload
+        )
+        return bool(response)
 
     def replace_sticker_in_set(
-        self,
-        user_id: int,
-        name: str,
-        old_sticker: str,
-        sticker: Dict[str, Any]
-    ) -> Dict[Any, Any]:
+        self, user_id: int, name: str, old_sticker: str, sticker: InputSticker
+    ) -> bool:
         """
         Replace an existing sticker in a set with a new one.
         Equivalent to: delete → add → set position.
@@ -3937,15 +4385,14 @@ class Telegram:
             "user_id": user_id,
             "name": name,
             "old_sticker": old_sticker,
-            "sticker": json.dumps(sticker),
+            "sticker": sticker.to_dict(),
         }
-        return self._make_request("replaceStickerInSet", method="POST", data=payload)
+        response = self._make_request(
+            "replaceStickerInSet", method="POST", data=payload
+        )
+        return bool(response)
 
-    def set_sticker_emoji_list(
-        self,
-        sticker: str,
-        emoji_list: List[str]
-    ) -> Dict[Any, Any]:
+    def set_sticker_emoji_list(self, sticker: str, emoji_list: List[str]) -> bool:
         """
         Change the list of emoji associated with a regular or custom emoji sticker.
         The sticker must belong to a bot-created set.
@@ -3958,13 +4405,14 @@ class Telegram:
             "sticker": sticker,
             "emoji_list": json.dumps(emoji_list),
         }
-        return self._make_request("setStickerEmojiList", method="POST", data=payload)
+        response = self._make_request(
+            "setStickerEmojiList", method="POST", data=payload
+        )
+        return bool(response)
 
     def set_sticker_keywords(
-        self,
-        sticker: str,
-        keywords: Optional[List[str]] = None
-    ) -> Dict[Any, Any]:
+        self, sticker: str, keywords: Optional[List[str]] = None
+    ) -> bool:
         """
         Change search keywords for a regular or custom emoji sticker.
         Total length of all keywords must not exceed 64 characters.
@@ -3978,15 +4426,12 @@ class Telegram:
             "sticker": sticker,
             "keywords": json.dumps(keywords) if keywords is not None else None,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setStickerKeywords", method="POST", data=filtered_payload)
+        response = self._make_request("setStickerKeywords", method="POST", data=payload)
+        return bool(response)
 
     def set_sticker_mask_position(
-        self,
-        sticker: str,
-        mask_position: Optional[Dict[str, Any]] = None
-    ) -> Dict[Any, Any]:
+        self, sticker: str, mask_position: Optional[Dict[str, Any]] = None
+    ) -> bool:
         """
         Change the mask position of a mask sticker.
         The sticker must belong to a sticker set created by the bot.
@@ -3999,17 +4444,16 @@ class Telegram:
         """
         payload = {
             "sticker": sticker,
-            "mask_position": json.dumps(mask_position) if mask_position is not None else None,
+            "mask_position": json.dumps(mask_position)
+            if mask_position is not None
+            else None,
         }
+        response = self._make_request(
+            "setStickerMaskPosition", method="POST", data=payload
+        )
+        return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setStickerMaskPosition", method="POST", data=filtered_payload)
-
-    def set_sticker_set_title(
-        self,
-        name: str,
-        title: str
-    ) -> Dict[Any, Any]:
+    def set_sticker_set_title(self, name: str, title: str) -> bool:
         """
         Set the title of a sticker set created by the bot.
 
@@ -4021,15 +4465,16 @@ class Telegram:
             "name": name,
             "title": title,
         }
-        return self._make_request("setStickerSetTitle", method="POST", data=payload)
+        response = self._make_request("setStickerSetTitle", method="POST", data=payload)
+        return bool(response)
 
     def set_sticker_set_thumbnail(
         self,
         name: str,
         user_id: int,
-        thumbnail: Optional[Union[str, bytes]] = None,
-        format: str = "static"
-    ) -> Dict[Any, Any]:
+        thumbnail: InputFile | str | None = None,
+        format: str = "static",
+    ) -> bool:
         """
         Set the thumbnail of a regular or mask sticker set.
         The format of the thumbnail must match the format of the stickers in the set.
@@ -4054,23 +4499,23 @@ class Telegram:
             "user_id": user_id,
             "format": format,
         }
-
         files = None
         if isinstance(thumbnail, bytes):
             files = {"thumbnail": thumbnail}
             payload["thumbnail"] = None
+
         elif thumbnail is not None:
             payload["thumbnail"] = thumbnail
-        # else: omit thumbnail to drop it
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("setStickerSetThumbnail", method="POST", data=filtered_payload, files=files)
+        # else: omit thumbnail to drop it
+        response = self._make_request(
+            "setStickerSetThumbnail", method="POST", data=payload, files=files
+        )
+        return bool(response)
 
     def set_custom_emoji_sticker_set_thumbnail(
-        self,
-        name: str,
-        custom_emoji_id: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        self, name: str, custom_emoji_id: str | None = ""
+    ) -> bool:
         """
         Set the thumbnail of a custom emoji sticker set.
 
@@ -4083,14 +4528,13 @@ class Telegram:
             "name": name,
             "custom_emoji_id": custom_emoji_id,
         }
-
         # We include custom_emoji_id even if None (to allow empty string for removal)
-        return self._make_request("setCustomEmojiStickerSetThumbnail", method="POST", data=payload)
+        response = self._make_request(
+            "setCustomEmojiStickerSetThumbnail", method="POST", data=payload
+        )
+        return bool(response)
 
-    def delete_sticker_set(
-        self,
-        name: str
-    ) -> Dict[Any, Any]:
+    def delete_sticker_set(self, name: str) -> bool:
         """
         Delete a sticker set that was created by the bot.
 
@@ -4098,17 +4542,97 @@ class Telegram:
         :return: True on success.
         """
         payload = {"name": name}
-        return self._make_request("deleteStickerSet", method="POST", data=payload)
+        response = self._make_request("deleteStickerSet", method="POST", data=payload)
+        return bool(response)
+
+    def send_rich_message(
+        self,
+        chat_id: int | str,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,
+        business_connection_id: str | None = None,
+        direct_messages_topic_id: int | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: ReplyMarkup | None = None,
+    ) -> Message:
+        """
+        Use this method to send rich messages. If the message contains a block with a media element,
+        then the bot must have the right to send the media to the chat.
+
+        :param chat_id: Unique identifier for the target chat or username of the target bot, supergroup or channel in the format @username.
+        :param rich_message: The message to be sent.
+        :param message_thread_id: Unique identifier for the target message thread (topic) of a forum; for forum supergroups and private chats of bots with forum topic mode enabled only.
+        :param business_connection_id: Unique identifier of the business connection on behalf of which the message will be sent.
+        :param direct_messages_topic_id: Identifier of the direct messages topic to which the message will be sent; required if the message is sent to a direct messages chat.
+        :param disable_notification: Sends the message silently. Users will receive a notification with no sound.
+        :param protect_content: Protects the contents of the sent message from forwarding and saving.
+        :param allow_paid_broadcast: Pass True to allow up to 1000 messages per second, ignoring broadcasting limits for a fee of 0.1 Telegram Stars per message. The relevant Stars will be withdrawn from the bot's balance.
+        :param message_effect_id: Unique identifier of the message effect to be added to the message; for private chats only.
+        :param suggested_post_parameters: A JSON-serialized object containing the parameters of the suggested post to send; for direct messages chats only. If the message is sent as a reply to another suggested post, then that suggested post is automatically declined.
+        :param reply_parameters: Description of the message to reply to.
+        :param reply_markup: Additional interface options. A JSON-serialized object for an inline keyboard, custom reply keyboard, instructions to remove a reply keyboard or to force a reply from the user.
+        :return: The sent Message object on success.
+        """
+        payload = {
+            "chat_id": chat_id,
+            "rich_message": rich_message,
+            "message_thread_id": message_thread_id,
+            "business_connection_id": business_connection_id,
+            "direct_messages_topic_id": direct_messages_topic_id,
+            "disable_notification": disable_notification,
+            "protect_content": protect_content,
+            "allow_paid_broadcast": allow_paid_broadcast,
+            "message_effect_id": message_effect_id,
+            "suggested_post_parameters": suggested_post_parameters,
+            "reply_parameters": reply_parameters,
+            "reply_markup": reply_markup,
+        }
+        response = self._make_request("sendRichMessage", method="POST", data=payload)
+        return Message.model_validate(response)
+
+    def send_rich_message_draft(
+        self,
+        chat_id: int,
+        draft_id: int,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,
+    ):
+        """
+        Use this method to stream a partial rich message to a user while the message is being generated.
+        Note that the streamed draft is ephemeral and acts as a temporary 30-second preview - once the output is finalized,
+        you must call sendRichMessage with the complete message to persist it in the user's chat.
+
+        :param chat_id: Unique identifier for the target private chat.
+        :param draft_id: Unique identifier of the message draft; must be non-zero. Changes to drafts with the same identifier are animated.
+        :param rich_message: The partial message to be streamed.
+        :param message_thread_id: Unique identifier for the target message thread.
+        :return: True on success.
+        """
+        payload = {
+            "chat_id": chat_id,
+            "draft_id": draft_id,
+            "rich_message": rich_message,
+            "message_thread_id": message_thread_id,
+        }
+        response = self._make_request(
+            "sendRichMessageDraft", method="POST", data=payload
+        )
+        return bool(response)
 
     def answer_inline_query(
         self,
         inline_query_id: str,
-        results: List[Dict[str, Any]],
-        cache_time: Optional[int] = None,
-        is_personal: Optional[bool] = None,
-        next_offset: Optional[str] = None,
-        button: Optional[Dict[str, Any]] = None
-    ) -> Dict[Any, Any]:
+        results: List[InlineQueryResult],
+        cache_time: int | None = None,
+        is_personal: bool | None = None,
+        next_offset: str | None = None,
+        button: InlineQueryResultsButton | None = None,
+    ) -> bool:
         """
         Send answers to an incoming inline query.
         On success, True is returned.
@@ -4124,1205 +4648,18 @@ class Telegram:
         """
         payload = {
             "inline_query_id": inline_query_id,
-            "results": json.dumps(results),
+            "results": json.dumps([result.to_dict() for result in results]),
             "cache_time": cache_time,
             "is_personal": is_personal,
             "next_offset": next_offset,
-            "button": json.dumps(button) if button is not None else None,
+            "button": button.to_dict() if button else None,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("answerInlineQuery", method="POST", data=filtered_payload)
-
-    def create_inline_query_result_article(
-        id: str,
-        title: str,
-        input_message_content: Dict[str, Any],
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        url: Optional[str] = None,
-        description: Optional[str] = None,
-        thumbnail_url: Optional[str] = None,
-        thumbnail_width: Optional[int] = None,
-        thumbnail_height: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultArticle object.
-
-        Represents a link to an article or web page.
-
-        :param id: Unique identifier for this result, 1-64 bytes.
-        :param title: Title of the result.
-        :param input_message_content: Content of the message to be sent when the result is chosen.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param url: Optional URL of the result.
-        :param description: Optional short description of the result.
-        :param thumbnail_url: Optional URL of the thumbnail for the result.
-        :param thumbnail_width: Optional width of the thumbnail.
-        :param thumbnail_height: Optional height of the thumbnail.
-        :return: A dictionary representing an InlineQueryResultArticle.
-        """
-        result = {
-            "type": "article",
-            "id": id,
-            "title": title,
-            "input_message_content": input_message_content,
-            "reply_markup": reply_markup,
-            "url": url,
-            "description": description,
-            "thumbnail_url": thumbnail_url,
-            "thumbnail_width": thumbnail_width,
-            "thumbnail_height": thumbnail_height,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_photo(
-        id: str,
-        photo_url: str,
-        thumbnail_url: str,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None,
-        photo_width: Optional[int] = None,
-        photo_height: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultPhoto object.
-
-        Represents a link to a photo. By default, this photo will be sent by the user with optional caption.
-        Alternatively, you can use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1-64 bytes.
-        :param photo_url: A valid URL of the photo (JPEG only, max 5MB).
-        :param thumbnail_url: URL of the thumbnail (JPEG/GIF/MP4, recommended 80x80).
-        :param title: Optional title for the result.
-        :param description: Optional short description of the result.
-        :param caption: Optional caption of the photo to be sent (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (can be used instead of parse_mode).
-        :param show_caption_above_media: Pass True to show the caption above the photo.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the photo.
-        :param photo_width: Optional width of the photo.
-        :param photo_height: Optional height of the photo.
-        :return: A dictionary representing an InlineQueryResultPhoto.
-        """
-        result = {
-            "type": "photo",
-            "id": id,
-            "photo_url": photo_url,
-            "thumbnail_url": thumbnail_url,
-            "title": title,
-            "description": description,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "show_caption_above_media": show_caption_above_media,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-            "photo_width": photo_width,
-            "photo_height": photo_height,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_gif(
-        id: str,
-        gif_url: str,
-        thumbnail_url: str,
-        title: Optional[str] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        gif_width: Optional[int] = None,
-        gif_height: Optional[int] = None,
-        gif_duration: Optional[int] = None,
-        thumbnail_mime_type: Optional[str] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultGif object.
-
-        Represents a link to an animated GIF file.
-        By default, this GIF will be sent by the user with optional caption.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1-64 bytes.
-        :param gif_url: A valid URL for the GIF file.
-        :param thumbnail_url: URL of the static (JPEG/GIF) or animated (MPEG4) thumbnail.
-        :param title: Optional title for the result.
-        :param caption: Optional caption of the GIF (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (instead of parse_mode).
-        :param show_caption_above_media: Pass True to show the caption above the GIF.
-        :param gif_width: Optional width of the GIF.
-        :param gif_height: Optional height of the GIF.
-        :param gif_duration: Optional duration of the GIF in seconds.
-        :param thumbnail_mime_type: MIME type of the thumbnail: 'image/jpeg', 'image/gif', or 'video/mp4'. Default: 'image/jpeg'.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the GIF.
-        :return: A dictionary representing an InlineQueryResultGif.
-        """
-        result = {
-            "type": "gif",
-            "id": id,
-            "gif_url": gif_url,
-            "thumbnail_url": thumbnail_url,
-            "title": title,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "show_caption_above_media": show_caption_above_media,
-            "gif_width": gif_width,
-            "gif_height": gif_height,
-            "gif_duration": gif_duration,
-            "thumbnail_mime_type": thumbnail_mime_type,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_results_button(
-        text: str,
-        web_app: Optional[WebAppInfo] = None,
-        start_parameter: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultsButton object.
-
-        Represents a button to be shown above inline query results.
-        You must use exactly one of the optional fields: web_app or start_parameter.
-
-        :param text: Label text on the button.
-        :param web_app: Description of the Web App to launch when the button is pressed.
-        :param start_parameter: Deep-linking parameter for the /start message sent to the bot when the button is pressed.
-                                Must be 1–64 characters, containing only A-Z, a-z, 0-9, _, -.
-        :return: A dictionary representing an InlineQueryResultsButton.
-        """
-        if not web_app and not start_parameter:
-            raise ValueError("Either 'web_app' or 'start_parameter' must be provided.")
-
-        button = {
-            "text": text,
-            "web_app": web_app,
-            "start_parameter": start_parameter,
-        }
-        return {k: v for k, v in button.items() if v is not None}
-
-    def create_inline_query_result_mpeg4_gif(
-        id: str,
-        mpeg4_url: str,
-        thumbnail_url: str,
-        title: Optional[str] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        mpeg4_width: Optional[int] = None,
-        mpeg4_height: Optional[int] = None,
-        mpeg4_duration: Optional[int] = None,
-        thumbnail_mime_type: Optional[str] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultMpeg4Gif object.
-
-        Represents a link to a video animation (H.264/MPEG-4 AVC without sound).
-        By default, the MPEG-4 file will be sent by the user with an optional caption.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param mpeg4_url: A valid URL for the MPEG4 file.
-        :param thumbnail_url: URL of the static (JPEG/GIF) or animated (MPEG4) thumbnail.
-        :param title: Optional title for the result.
-        :param caption: Optional caption of the video to be sent (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (can be used instead of parse_mode).
-        :param show_caption_above_media: Pass True to show the caption above the video.
-        :param mpeg4_width: Optional width of the video.
-        :param mpeg4_height: Optional height of the video.
-        :param mpeg4_duration: Optional duration of the video in seconds.
-        :param thumbnail_mime_type: MIME type of the thumbnail: 'image/jpeg', 'image/gif', or 'video/mp4'. Default: 'image/jpeg'.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the animation.
-        :return: A dictionary representing an InlineQueryResultMpeg4Gif.
-        """
-        result = {
-            "type": "mpeg4_gif",
-            "id": id,
-            "mpeg4_url": mpeg4_url,
-            "thumbnail_url": thumbnail_url,
-            "title": title,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "show_caption_above_media": show_caption_above_media,
-            "mpeg4_width": mpeg4_width,
-            "mpeg4_height": mpeg4_height,
-            "mpeg4_duration": mpeg4_duration,
-            "thumbnail_mime_type": thumbnail_mime_type,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_video(
-        id: str,
-        video_url: str,
-        mime_type: str,
-        thumbnail_url: str,
-        title: str,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        video_width: Optional[int] = None,
-        video_height: Optional[int] = None,
-        video_duration: Optional[int] = None,
-        description: Optional[str] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultVideo object.
-
-        Represents a link to a page with an embedded video player or a video file.
-        By default, the video file will be sent by the user with an optional caption.
-        If the video is embedded (e.g., YouTube), you MUST use input_message_content to replace the content.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param video_url: A valid URL for the embedded video player or video file.
-        :param mime_type: MIME type of the content: 'text/html' (for embedded players) or 'video/mp4'.
-        :param thumbnail_url: URL of the thumbnail (JPEG only).
-        :param title: Title for the result.
-        :param caption: Optional caption of the video to be sent (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (instead of parse_mode).
-        :param show_caption_above_media: Pass True to show the caption above the video.
-        :param video_width: Optional width of the video.
-        :param video_height: Optional height of the video.
-        :param video_duration: Optional duration of the video in seconds.
-        :param description: Optional short description of the result.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the video. **Required** if mime_type is 'text/html'.
-        :return: A dictionary representing an InlineQueryResultVideo.
-        """
-        if mime_type not in ("text/html", "video/mp4"):
-            raise ValueError("mime_type must be 'text/html' or 'video/mp4'")
-
-        if mime_type == "text/html" and not input_message_content:
-            raise ValueError("input_message_content is required when mime_type is 'text/html' (e.g., YouTube)")
-
-        result = {
-            "type": "video",
-            "id": id,
-            "video_url": video_url,
-            "mime_type": mime_type,
-            "thumbnail_url": thumbnail_url,
-            "title": title,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "show_caption_above_media": show_caption_above_media,
-            "video_width": video_width,
-            "video_height": video_height,
-            "video_duration": video_duration,
-            "description": description,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_audio(
-        id: str,
-        audio_url: str,
-        title: str,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        performer: Optional[str] = None,
-        audio_duration: Optional[int] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultAudio object.
-
-        Represents a link to an MP3 audio file.
-        By default, the audio file will be sent by the user.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param audio_url: A valid URL for the audio file.
-        :param title: Title of the audio.
-        :param caption: Optional caption of the audio (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (instead of parse_mode).
-        :param performer: Optional performer of the audio.
-        :param audio_duration: Optional duration of the audio in seconds.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the audio.
-        :return: A dictionary representing an InlineQueryResultAudio.
-        """
-        result = {
-            "type": "audio",
-            "id": id,
-            "audio_url": audio_url,
-            "title": title,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "performer": performer,
-            "audio_duration": audio_duration,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_voice(
-        id: str,
-        voice_url: str,
-        title: str,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        voice_duration: Optional[int] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultVoice object.
-
-        Represents a link to a voice recording (.OGG with OPUS).
-        By default, the voice recording will be sent by the user.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param voice_url: A valid URL for the voice recording.
-        :param title: Title of the recording.
-        :param caption: Optional caption of the voice message (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (instead of parse_mode).
-        :param voice_duration: Optional duration of the recording in seconds.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the voice recording.
-        :return: A dictionary representing an InlineQueryResultVoice.
-        """
-        result = {
-            "type": "voice",
-            "id": id,
-            "voice_url": voice_url,
-            "title": title,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "voice_duration": voice_duration,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_document(
-        id: str,
-        title: str,
-        document_url: str,
-        mime_type: str,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        description: Optional[str] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None,
-        thumbnail_url: Optional[str] = None,
-        thumbnail_width: Optional[int] = None,
-        thumbnail_height: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultDocument object.
-
-        Represents a link to a file (.PDF or .ZIP).
-        By default, the file will be sent by the user with an optional caption.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param title: Title for the result.
-        :param document_url: A valid URL for the file.
-        :param mime_type: MIME type: 'application/pdf' or 'application/zip'.
-        :param caption: Optional caption of the document (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (instead of parse_mode).
-        :param description: Optional short description of the result.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the file.
-        :param thumbnail_url: Optional URL of the thumbnail (JPEG only).
-        :param thumbnail_width: Optional width of the thumbnail.
-        :param thumbnail_height: Optional height of the thumbnail.
-        :return: A dictionary representing an InlineQueryResultDocument.
-        """
-        if mime_type not in ("application/pdf", "application/zip"):
-            raise ValueError("mime_type must be 'application/pdf' or 'application/zip'")
-
-        result = {
-            "type": "document",
-            "id": id,
-            "title": title,
-            "document_url": document_url,
-            "mime_type": mime_type,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "description": description,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-            "thumbnail_url": thumbnail_url,
-            "thumbnail_width": thumbnail_width,
-            "thumbnail_height": thumbnail_height,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_location(
-        id: str,
-        latitude: float,
-        longitude: float,
-        title: str,
-        horizontal_accuracy: Optional[float] = None,
-        live_period: Optional[int] = None,
-        heading: Optional[int] = None,
-        proximity_alert_radius: Optional[int] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None,
-        thumbnail_url: Optional[str] = None,
-        thumbnail_width: Optional[int] = None,
-        thumbnail_height: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultLocation object.
-
-        Represents a location on a map.
-        By default, the location will be sent by the user.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param latitude: Location latitude in degrees.
-        :param longitude: Location longitude in degrees.
-        :param title: Title of the location.
-        :param horizontal_accuracy: Radius of uncertainty for the location in meters (0–1500).
-        :param live_period: Period in seconds during which the location can be updated (60–86400 or 0x7FFFFFFF).
-        :param heading: Direction of movement in degrees (1–360).
-        :param proximity_alert_radius: Maximum distance for proximity alerts in meters (1–100000).
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the location.
-        :param thumbnail_url: Optional URL of the thumbnail for the result.
-        :param thumbnail_width: Optional width of the thumbnail.
-        :param thumbnail_height: Optional height of the thumbnail.
-        :return: A dictionary representing an InlineQueryResultLocation.
-        """
-        result = {
-            "type": "location",
-            "id": id,
-            "latitude": latitude,
-            "longitude": longitude,
-            "title": title,
-            "horizontal_accuracy": horizontal_accuracy,
-            "live_period": live_period,
-            "heading": heading,
-            "proximity_alert_radius": proximity_alert_radius,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-            "thumbnail_url": thumbnail_url,
-            "thumbnail_width": thumbnail_width,
-            "thumbnail_height": thumbnail_height,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_venue(
-        id: str,
-        latitude: float,
-        longitude: float,
-        title: str,
-        address: str,
-        foursquare_id: Optional[str] = None,
-        foursquare_type: Optional[str] = None,
-        google_place_id: Optional[str] = None,
-        google_place_type: Optional[str] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None,
-        thumbnail_url: Optional[str] = None,
-        thumbnail_width: Optional[int] = None,
-        thumbnail_height: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultVenue object.
-
-        Represents a venue.
-        By default, the venue will be sent by the user.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param latitude: Latitude of the venue in degrees.
-        :param longitude: Longitude of the venue in degrees.
-        :param title: Title of the venue.
-        :param address: Address of the venue.
-        :param foursquare_id: Optional Foursquare identifier of the venue.
-        :param foursquare_type: Optional Foursquare type of the venue (e.g., 'arts_entertainment/aquarium').
-        :param google_place_id: Optional Google Places identifier of the venue.
-        :param google_place_type: Optional Google Places type of the venue.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the venue.
-        :param thumbnail_url: Optional URL of the thumbnail for the result.
-        :param thumbnail_width: Optional width of the thumbnail.
-        :param thumbnail_height: Optional height of the thumbnail.
-        :return: A dictionary representing an InlineQueryResultVenue.
-        """
-        result = {
-            "type": "venue",
-            "id": id,
-            "latitude": latitude,
-            "longitude": longitude,
-            "title": title,
-            "address": address,
-            "foursquare_id": foursquare_id,
-            "foursquare_type": foursquare_type,
-            "google_place_id": google_place_id,
-            "google_place_type": google_place_type,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-            "thumbnail_url": thumbnail_url,
-            "thumbnail_width": thumbnail_width,
-            "thumbnail_height": thumbnail_height,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_contact(
-        id: str,
-        phone_number: str,
-        first_name: str,
-        last_name: Optional[str] = None,
-        vcard: Optional[str] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None,
-        thumbnail_url: Optional[str] = None,
-        thumbnail_width: Optional[int] = None,
-        thumbnail_height: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultContact object.
-
-        Represents a contact with a phone number.
-        By default, the contact will be sent by the user.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param phone_number: Contact's phone number.
-        :param first_name: Contact's first name.
-        :param last_name: Optional contact's last name.
-        :param vcard: Optional vCard data about the contact (0–2048 bytes).
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the contact.
-        :param thumbnail_url: Optional URL of the thumbnail for the result.
-        :param thumbnail_width: Optional width of the thumbnail.
-        :param thumbnail_height: Optional height of the thumbnail.
-        :return: A dictionary representing an InlineQueryResultContact.
-        """
-        result = {
-            "type": "contact",
-            "id": id,
-            "phone_number": phone_number,
-            "first_name": first_name,
-            "last_name": last_name,
-            "vcard": vcard,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-            "thumbnail_url": thumbnail_url,
-            "thumbnail_width": thumbnail_width,
-            "thumbnail_height": thumbnail_height,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_game(
-        id: str,
-        game_short_name: str,
-        reply_markup: Optional[InlineKeyboardMarkup] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultGame object.
-
-        Represents a game.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param game_short_name: Short name of the game.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :return: A dictionary representing an InlineQueryResultGame.
-        """
-        result = {
-            "type": "game",
-            "id": id,
-            "game_short_name": game_short_name,
-            "reply_markup": reply_markup,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_cached_photo(
-        id: str,
-        photo_file_id: str,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultCachedPhoto object.
-
-        Represents a link to a photo stored on Telegram servers.
-        By default, the photo will be sent by the user with an optional caption.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param photo_file_id: A valid file identifier of the photo stored on Telegram servers.
-        :param title: Optional title for the result.
-        :param description: Optional short description of the result.
-        :param caption: Optional caption of the photo (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (instead of parse_mode).
-        :param show_caption_above_media: Pass True to show the caption above the photo.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the photo.
-        :return: A dictionary representing an InlineQueryResultCachedPhoto.
-        """
-        result = {
-            "type": "photo",
-            "id": id,
-            "photo_file_id": photo_file_id,
-            "title": title,
-            "description": description,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "show_caption_above_media": show_caption_above_media,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_cached_gif(
-        id: str,
-        gif_file_id: str,
-        title: Optional[str] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultCachedGif object.
-
-        Represents a link to an animated GIF stored on Telegram servers.
-        By default, the GIF will be sent by the user with an optional caption.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param gif_file_id: A valid file identifier for the GIF stored on Telegram servers.
-        :param title: Optional title for the result.
-        :param caption: Optional caption of the GIF (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (instead of parse_mode).
-        :param show_caption_above_media: Pass True to show the caption above the GIF.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the GIF animation.
-        :return: A dictionary representing an InlineQueryResultCachedGif.
-        """
-        result = {
-            "type": "gif",
-            "id": id,
-            "gif_file_id": gif_file_id,
-            "title": title,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "show_caption_above_media": show_caption_above_media,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_cached_mpeg4_gif(
-        id: str,
-        mpeg4_file_id: str,
-        title: Optional[str] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultCachedMpeg4Gif object.
-
-        Represents a link to a video animation (H.264/MPEG-4 AVC without sound) stored on Telegram servers.
-        By default, the MPEG-4 file will be sent by the user with an optional caption.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param mpeg4_file_id: A valid file identifier for the MPEG4 file stored on Telegram servers.
-        :param title: Optional title for the result.
-        :param caption: Optional caption of the video to be sent (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (can be used instead of parse_mode).
-        :param show_caption_above_media: Pass True to show the caption above the video.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the animation.
-        :return: A dictionary representing an InlineQueryResultCachedMpeg4Gif.
-        """
-        result = {
-            "type": "mpeg4_gif",
-            "id": id,
-            "mpeg4_file_id": mpeg4_file_id,
-            "title": title,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "show_caption_above_media": show_caption_above_media,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_cached_sticker(
-        id: str,
-        sticker_file_id: str,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultCachedSticker object.
-
-        Represents a link to a sticker stored on Telegram servers.
-        By default, the sticker will be sent by the user.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param sticker_file_id: A valid file identifier of the sticker stored on Telegram servers.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the sticker.
-        :return: A dictionary representing an InlineQueryResultCachedSticker.
-        """
-        result = {
-            "type": "sticker",
-            "id": id,
-            "sticker_file_id": sticker_file_id,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_cached_document(
-        id: str,
-        title: str,
-        document_file_id: str,
-        description: Optional[str] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultCachedDocument object.
-
-        Represents a link to a file stored on Telegram servers.
-        By default, the file will be sent by the user with an optional caption.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param title: Title for the result.
-        :param document_file_id: A valid file identifier for the document stored on Telegram servers.
-        :param description: Optional short description of the result.
-        :param caption: Optional caption of the document (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (instead of parse_mode).
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the file.
-        :return: A dictionary representing an InlineQueryResultCachedDocument.
-        """
-        result = {
-            "type": "document",
-            "id": id,
-            "title": title,
-            "document_file_id": document_file_id,
-            "description": description,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_cached_video(
-        id: str,
-        video_file_id: str,
-        title: str,
-        description: Optional[str] = None,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        show_caption_above_media: Optional[bool] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultCachedVideo object.
-
-        Represents a link to a video file stored on Telegram servers.
-        By default, the video will be sent by the user with an optional caption.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param video_file_id: A valid file identifier for the video stored on Telegram servers.
-        :param title: Title for the result.
-        :param description: Optional short description of the result.
-        :param caption: Optional caption of the video (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (instead of parse_mode).
-        :param show_caption_above_media: Pass True to show the caption above the video.
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the video.
-        :return: A dictionary representing an InlineQueryResultCachedVideo.
-        """
-        result = {
-            "type": "video",
-            "id": id,
-            "video_file_id": video_file_id,
-            "title": title,
-            "description": description,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "show_caption_above_media": show_caption_above_media,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_cached_voice(
-        id: str,
-        voice_file_id: str,
-        title: str,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultCachedVoice object.
-
-        Represents a link to a voice message stored on Telegram servers.
-        By default, the voice message will be sent by the user.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param voice_file_id: A valid file identifier for the voice message stored on Telegram servers.
-        :param title: Title of the voice message.
-        :param caption: Optional caption of the voice message (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (instead of parse_mode).
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the voice recording.
-        :return: A dictionary representing an InlineQueryResultCachedVoice.
-        """
-        result = {
-            "type": "voice",
-            "id": id,
-            "voice_file_id": voice_file_id,
-            "title": title,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_inline_query_result_cached_audio(
-        id: str,
-        audio_file_id: str,
-        caption: Optional[str] = None,
-        parse_mode: Optional[str] = None,
-        caption_entities: Optional[List[MessageEntity]] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None,
-        input_message_content: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InlineQueryResultCachedAudio object.
-
-        Represents a link to an MP3 audio file stored on Telegram servers.
-        By default, the audio file will be sent by the user.
-        Alternatively, use input_message_content to send a different message.
-
-        :param id: Unique identifier for this result, 1–64 bytes.
-        :param audio_file_id: A valid file identifier for the audio file stored on Telegram servers.
-        :param caption: Optional caption of the audio (0–1024 characters).
-        :param parse_mode: Mode for parsing entities in the caption ('HTML', 'MarkdownV2').
-        :param caption_entities: List of special entities in the caption (instead of parse_mode).
-        :param reply_markup: Optional inline keyboard attached to the message.
-        :param input_message_content: Content to send instead of the audio.
-        :return: A dictionary representing an InlineQueryResultCachedAudio.
-        """
-        result = {
-            "type": "audio",
-            "id": id,
-            "audio_file_id": audio_file_id,
-            "caption": caption,
-            "parse_mode": parse_mode,
-            "caption_entities": caption_entities,
-            "reply_markup": reply_markup,
-            "input_message_content": input_message_content,
-        }
-        return {k: v for k, v in result.items() if v is not None}
-
-    def create_input_text_message_content(
-        message_text: str,
-        parse_mode: Optional[str] = None,
-        entities: Optional[List[MessageEntity]] = None,
-        link_preview_options: Optional[LinkPreviewOptions] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InputTextMessageContent object.
-
-        Represents the content of a text message to be sent as the result of an inline query.
-
-        :param message_text: Text of the message to be sent (1–4096 characters).
-        :param parse_mode: Mode for parsing entities in the text ('HTML', 'MarkdownV2').
-        :param entities: List of special entities in the text (can be used instead of parse_mode).
-        :param link_preview_options: Options for link preview generation.
-        :return: A dictionary representing an InputTextMessageContent.
-        """
-        content = {
-            "message_text": message_text,
-            "parse_mode": parse_mode,
-            "entities": entities,
-            "link_preview_options": link_preview_options,
-        }
-        return {k: v for k, v in content.items() if v is not None}
-
-    def create_input_location_message_content(
-        latitude: float,
-        longitude: float,
-        horizontal_accuracy: Optional[float] = None,
-        live_period: Optional[int] = None,
-        heading: Optional[int] = None,
-        proximity_alert_radius: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InputLocationMessageContent object.
-
-        Represents the content of a location message to be sent as the result of an inline query.
-
-        :param latitude: Latitude of the location in degrees.
-        :param longitude: Longitude of the location in degrees.
-        :param horizontal_accuracy: Radius of uncertainty for the location in meters (0–1500).
-        :param live_period: Period in seconds during which the location can be updated (60–86400 or 0x7FFFFFFF).
-        :param heading: Direction of movement in degrees (1–360).
-        :param proximity_alert_radius: Maximum distance for proximity alerts in meters (1–100000).
-        :return: A dictionary representing an InputLocationMessageContent.
-        """
-        content = {
-            "latitude": latitude,
-            "longitude": longitude,
-            "horizontal_accuracy": horizontal_accuracy,
-            "live_period": live_period,
-            "heading": heading,
-            "proximity_alert_radius": proximity_alert_radius,
-        }
-        return {k: v for k, v in content.items() if v is not None}
-
-    def create_input_venue_message_content(
-        latitude: float,
-        longitude: float,
-        title: str,
-        address: str,
-        foursquare_id: Optional[str] = None,
-        foursquare_type: Optional[str] = None,
-        google_place_id: Optional[str] = None,
-        google_place_type: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InputVenueMessageContent object.
-
-        Represents the content of a venue message to be sent as the result of an inline query.
-
-        :param latitude: Latitude of the venue in degrees.
-        :param longitude: Longitude of the venue in degrees.
-        :param title: Name of the venue.
-        :param address: Address of the venue.
-        :param foursquare_id: Optional Foursquare identifier of the venue.
-        :param foursquare_type: Optional Foursquare type of the venue (e.g., 'arts_entertainment/aquarium').
-        :param google_place_id: Optional Google Places identifier of the venue.
-        :param google_place_type: Optional Google Places type of the venue.
-        :return: A dictionary representing an InputVenueMessageContent.
-        """
-        content = {
-            "latitude": latitude,
-            "longitude": longitude,
-            "title": title,
-            "address": address,
-            "foursquare_id": foursquare_id,
-            "foursquare_type": foursquare_type,
-            "google_place_id": google_place_id,
-            "google_place_type": google_place_type,
-        }
-        return {k: v for k, v in content.items() if v is not None}
-
-    def create_input_contact_message_content(
-        phone_number: str,
-        first_name: str,
-        last_name: Optional[str] = None,
-        vcard: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InputContactMessageContent object.
-
-        Represents the content of a contact message to be sent as the result of an inline query.
-
-        :param phone_number: Contact's phone number.
-        :param first_name: Contact's first name.
-        :param last_name: Optional contact's last name.
-        :param vcard: Optional vCard data about the contact (0–2048 bytes).
-        :return: A dictionary representing an InputContactMessageContent.
-        """
-        content = {
-            "phone_number": phone_number,
-            "first_name": first_name,
-            "last_name": last_name,
-            "vcard": vcard,
-        }
-        return {k: v for k, v in content.items() if v is not None}
-
-    def create_input_invoice_message_content(
-        title: str,
-        description: str,
-        payload: str,
-        provider_token: Optional[str],
-        currency: str,
-        prices: List[Dict[str, Any]],
-        max_tip_amount: Optional[int] = None,
-        suggested_tip_amounts: Optional[List[int]] = None,
-        provider_data: Optional[str] = None,
-        photo_url: Optional[str] = None,
-        photo_size: Optional[int] = None,
-        photo_width: Optional[int] = None,
-        photo_height: Optional[int] = None,
-        need_name: Optional[bool] = None,
-        need_phone_number: Optional[bool] = None,
-        need_email: Optional[bool] = None,
-        need_shipping_address: Optional[bool] = None,
-        send_phone_number_to_provider: Optional[bool] = None,
-        send_email_to_provider: Optional[bool] = None,
-        is_flexible: Optional[bool] = None
-    ) -> Dict[str, Any]:
-        """
-        Create an InputInvoiceMessageContent object.
-
-        Represents the content of an invoice message to be sent as the result of an inline query.
-
-        :param title: Product name (1–32 characters).
-        :param description: Product description (1–255 characters).
-        :param payload: Bot-defined invoice payload (1–128 bytes). Not shown to the user.
-        :param provider_token: Payment provider token from @BotFather. Pass empty string for payments in Telegram Stars.
-        :param currency: Three-letter ISO 4217 currency code (e.g., 'USD') or 'XTR' for Telegram Stars.
-        :param prices: Price breakdown as a list of LabeledPrice objects. Must contain exactly one item for Telegram Stars.
-        :param max_tip_amount: Maximum tip amount in smallest currency units (e.g., 145 for $1.45). Defaults to 0.
-        :param suggested_tip_amounts: List of suggested tip amounts (positive, increasing, <= max_tip_amount). Max 4 items.
-        :param provider_data: JSON-serialized data to share with the payment provider.
-        :param photo_url: URL of the product photo for the invoice.
-        :param photo_size: Photo size in bytes.
-        :param photo_width: Photo width.
-        :param photo_height: Photo height.
-        :param need_name: Pass True if user's full name is required to complete the order.
-        :param need_phone_number: Pass True if user's phone number is required.
-        :param need_email: Pass True if user's email address is required.
-        :param need_shipping_address: Pass True if shipping address is required.
-        :param send_phone_number_to_provider: Pass True to send user's phone number to the provider.
-        :param send_email_to_provider: Pass True to send user's email to the provider.
-        :param is_flexible: Pass True if the final price depends on the shipping method.
-        :return: A dictionary representing an InputInvoiceMessageContent.
-        """
-        if currency == "XTR" and provider_token != "":
-            raise ValueError("For payments in Telegram Stars (XTR), provider_token must be an empty string.")
-
-        content = {
-            "title": title,
-            "description": description,
-            "payload": payload,
-            "provider_token": provider_token,
-            "currency": currency,
-            "prices": prices,
-            "max_tip_amount": max_tip_amount,
-            "suggested_tip_amounts": suggested_tip_amounts,
-            "provider_data": provider_data,
-            "photo_url": photo_url,
-            "photo_size": photo_size,
-            "photo_width": photo_width,
-            "photo_height": photo_height,
-            "need_name": need_name,
-            "need_phone_number": need_phone_number,
-            "need_email": need_email,
-            "need_shipping_address": need_shipping_address,
-            "send_phone_number_to_provider": send_phone_number_to_provider,
-            "send_email_to_provider": send_email_to_provider,
-            "is_flexible": is_flexible,
-        }
-        return {k: v for k, v in content.items() if v is not None}
-
-    def create_chosen_inline_result(
-        result_id: str,
-        from_user: Dict[str, Any],
-        query: str,
-        location: Optional[Dict[str, Any]] = None,
-        inline_message_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Create a ChosenInlineResult object (simulated for testing or internal use).
-
-        Represents a result of an inline query that was chosen by the user and sent to their chat partner.
-        Note: This object is received in updates only if inline feedback is enabled via @BotFather.
-
-        :param result_id: The unique identifier for the result that was chosen.
-        :param from_user: The user that chose the result (User object).
-        :param query: The query that was used to obtain the result.
-        :param location: Optional. Sender's location, only for bots that require user location.
-        :param inline_message_id: Optional. Identifier of the sent inline message. Available only if there is an inline keyboard attached.
-                                Can be used to edit the message later.
-        :return: A dictionary representing a ChosenInlineResult object.
-        """
-        result = {
-            "result_id": result_id,
-            "from": from_user,
-            "query": query,
-            "location": location,
-            "inline_message_id": inline_message_id,
-        }
-        return {k: v for k, v in result.items() if v is not None}
+        response = self._make_request("answerInlineQuery", method="POST", data=payload)
+        return bool(response)
 
     def answer_web_app_query(
-        self,
-        web_app_query_id: str,
-        result: Dict[str, Any]
-    ) -> Dict[Any, Any]:
+        self, web_app_query_id: str, result: InlineQueryResult
+    ) -> SentWebAppMessage:
         """
         Set the result of an interaction with a Web App and send a corresponding message on behalf of the user
         to the chat from which the query originated.
@@ -5338,11 +4675,13 @@ class Telegram:
             "web_app_query_id": web_app_query_id,
             "result": json.dumps(result),
         }
-        return self._make_request("answerWebAppQuery", method="POST", data=payload)
+        response = self._make_request("answerWebAppQuery", method="POST", data=payload)
+        return SentWebAppMessage.model_validate(response)
 
     def create_sent_web_app_message(
-        inline_message_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self,
+        inline_message_id: str | None = None,
+    ) -> SentWebAppMessage:
         """
         Create a SentWebAppMessage object (typically returned by answerWebAppQuery).
 
@@ -5351,19 +4690,20 @@ class Telegram:
         :param inline_message_id: Optional. Identifier of the sent inline message. Available only if there is an inline keyboard attached.
         :return: A dictionary representing a SentWebAppMessage object.
         """
-        return {
+        result = {
             "inline_message_id": inline_message_id,
         }
+        return SentWebAppMessage.model_validate(result)
 
     def save_prepared_inline_message(
         self,
         user_id: int,
         result: Dict[str, Any],
-        allow_user_chats: Optional[bool] = None,
-        allow_bot_chats: Optional[bool] = None,
-        allow_group_chats: Optional[bool] = None,
-        allow_channel_chats: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        allow_user_chats: bool | None = None,
+        allow_bot_chats: bool | None = None,
+        allow_group_chats: bool | None = None,
+        allow_channel_chats: bool | None = None,
+    ) -> PreparedInlineMessage:
         """
         Store a message that can be sent by a user of a Mini App.
         This allows the Mini App to prepare a message in advance, which the user can send later with a single tap.
@@ -5386,14 +4726,30 @@ class Telegram:
             "allow_group_chats": allow_group_chats,
             "allow_channel_chats": allow_channel_chats,
         }
+        response = self._make_request(
+            "savePreparedInlineMessage", method="POST", data=payload
+        )
+        return PreparedInlineMessage.model_validate(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("savePreparedInlineMessage", method="POST", data=filtered_payload)
+    def save_prepared_keyboard_button(
+        self, user_id: int, button: KeyboardButton
+    ) -> PreparedKeyboardButton:
+        """
+        Stores a keyboard button that can be used by a user within a Mini App.
+
+        :param user_id: Unique identifier of the target user that can use the prepared message.
+        :param button: A JSON-serialized object describing the button to be saved. The button must be of the type request_users, request_chat, or request_managed_bot.
+        :return: PreparedKeyboardButton object
+        """
+        payload = {"user_id": user_id, "button": button}
+        response = self._make_request(
+            "savePreparedKeyboardButton", method="POST", data=payload
+        )
+        return PreparedKeyboardButton.model_validate(response)
 
     def create_prepared_inline_message(
-        id: str,
-        expiration_date: int
-    ) -> Dict[str, Any]:
+        self, _id: str, expiration_date: int
+    ) -> PreparedInlineMessage:
         """
         Create a PreparedInlineMessage object (returned by savePreparedInlineMessage).
 
@@ -5403,45 +4759,46 @@ class Telegram:
         :param expiration_date: Expiration date of the prepared message, in Unix time. Expired messages cannot be used.
         :return: A dictionary representing a PreparedInlineMessage object.
         """
-        return {
-            "id": id,
+        result = {
+            "id": _id,
             "expiration_date": expiration_date,
         }
+        return PreparedInlineMessage.model_validate(result)
 
     def send_invoice(
         self,
-        chat_id: Union[int, str],
+        chat_id: int | str,
         title: str,
         description: str,
         payload: str,
         currency: str,
-        prices: List[Dict[str, Any]],
-        message_thread_id: Optional[int] = None,
-        direct_messages_topic_id: Optional[int] = None,
-        provider_token: Optional[str] = None,
-        max_tip_amount: Optional[int] = None,
-        suggested_tip_amounts: Optional[List[int]] = None,
-        start_parameter: Optional[str] = None,
-        provider_data: Optional[str] = None,
-        photo_url: Optional[str] = None,
-        photo_size: Optional[int] = None,
-        photo_width: Optional[int] = None,
-        photo_height: Optional[int] = None,
-        need_name: Optional[bool] = None,
-        need_phone_number: Optional[bool] = None,
-        need_email: Optional[bool] = None,
-        need_shipping_address: Optional[bool] = None,
-        send_phone_number_to_provider: Optional[bool] = None,
-        send_email_to_provider: Optional[bool] = None,
-        is_flexible: Optional[bool] = None,
-        disable_notification: Optional[bool] = None,
-        protect_content: Optional[bool] = None,
-        allow_paid_broadcast: Optional[bool] = None,
-        message_effect_id: Optional[str] = None,
-        suggested_post_parameters: Optional[SuggestedPostParameters] = None,
-        reply_parameters: Optional[ReplyParameters] = None,
-        reply_markup: Optional[InlineKeyboardMarkup] = None
-    ) -> Dict[Any, Any]:
+        prices: List[LabeledPrice],
+        message_thread_id: int | None = None,
+        direct_messages_topic_id: int | None = None,
+        provider_token: str | None = None,
+        max_tip_amount: int | None = None,
+        suggested_tip_amounts: List[int] | None = None,
+        start_parameter: str | None = None,
+        provider_data: str | None = None,
+        photo_url: str | None = None,
+        photo_size: int | None = None,
+        photo_width: int | None = None,
+        photo_height: int | None = None,
+        need_name: bool | None = None,
+        need_phone_number: bool | None = None,
+        need_email: bool | None = None,
+        need_shipping_address: bool | None = None,
+        send_phone_number_to_provider: bool | None = None,
+        send_email_to_provider: bool | None = None,
+        is_flexible: bool | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        suggested_post_parameters: SuggestedPostParameters | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Message:
         """
         Send an invoice for payment.
 
@@ -5485,9 +4842,11 @@ class Telegram:
         :return: The sent Message object on success.
         """
         if currency == "XTR" and (provider_token is not None and provider_token != ""):
-            raise ValueError("For payments in Telegram Stars (XTR), provider_token must be an empty string.")
+            raise ValueError(
+                "For payments in Telegram Stars (XTR), provider_token must be an empty string."
+            )
 
-        payload = {
+        payload_data = {
             "chat_id": chat_id,
             "message_thread_id": message_thread_id,
             "direct_messages_topic_id": direct_messages_topic_id,
@@ -5520,9 +4879,8 @@ class Telegram:
             "reply_parameters": reply_parameters,
             "reply_markup": reply_markup,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("sendInvoice", method="POST", data=filtered_payload)
+        response = self._make_request("sendInvoice", method="POST", data=payload_data)
+        return Message.model_validate(response)
 
     def create_invoice_link(
         self,
@@ -5530,25 +4888,25 @@ class Telegram:
         description: str,
         payload: str,
         currency: str,
-        prices: List[Dict[str, Any]],
-        business_connection_id: Optional[str] = None,
-        provider_token: Optional[str] = None,
-        subscription_period: Optional[int] = None,
-        max_tip_amount: Optional[int] = None,
-        suggested_tip_amounts: Optional[List[int]] = None,
-        provider_data: Optional[str] = None,
-        photo_url: Optional[str] = None,
-        photo_size: Optional[int] = None,
-        photo_width: Optional[int] = None,
-        photo_height: Optional[int] = None,
-        need_name: Optional[bool] = None,
-        need_phone_number: Optional[bool] = None,
-        need_email: Optional[bool] = None,
-        need_shipping_address: Optional[bool] = None,
-        send_phone_number_to_provider: Optional[bool] = None,
-        send_email_to_provider: Optional[bool] = None,
-        is_flexible: Optional[bool] = None
-    ) -> Dict[Any, Any]:
+        prices: List[LabeledPrice],
+        business_connection_id: str | None = None,
+        provider_token: str | None = None,
+        subscription_period: int | None = None,
+        max_tip_amount: int | None = None,
+        suggested_tip_amounts: List[int] | None = None,
+        provider_data: str | None = None,
+        photo_url: str | None = None,
+        photo_size: int | None = None,
+        photo_width: int | None = None,
+        photo_height: int | None = None,
+        need_name: bool | None = None,
+        need_phone_number: bool | None = None,
+        need_email: bool | None = None,
+        need_shipping_address: bool | None = None,
+        send_phone_number_to_provider: bool | None = None,
+        send_email_to_provider: bool | None = None,
+        is_flexible: bool | None = None,
+    ) -> str:
         """
         Create a direct link for an invoice. This link can be used to open the payment interface directly.
 
@@ -5584,9 +4942,13 @@ class Telegram:
         # Validate currency and provider_token for Stars
         if currency == "XTR":
             if provider_token not in (None, ""):
-                raise ValueError("For payments in Telegram Stars (XTR), provider_token must be an empty string.")
+                raise ValueError(
+                    "For payments in Telegram Stars (XTR), provider_token must be an empty string."
+                )
             if subscription_period is not None and subscription_period != 2592000:
-                raise ValueError("For Telegram Stars subscriptions, subscription_period must be 2592000 (30 days).")
+                raise ValueError(
+                    "For Telegram Stars subscriptions, subscription_period must be 2592000 (30 days)."
+                )
 
         payload_data = {
             "business_connection_id": business_connection_id,
@@ -5598,7 +4960,9 @@ class Telegram:
             "prices": json.dumps(prices),
             "subscription_period": subscription_period,
             "max_tip_amount": max_tip_amount,
-            "suggested_tip_amounts": json.dumps(suggested_tip_amounts) if suggested_tip_amounts is not None else None,
+            "suggested_tip_amounts": json.dumps(suggested_tip_amounts)
+            if suggested_tip_amounts is not None
+            else None,
             "provider_data": provider_data,
             "photo_url": photo_url,
             "photo_size": photo_size,
@@ -5612,17 +4976,18 @@ class Telegram:
             "send_email_to_provider": send_email_to_provider,
             "is_flexible": is_flexible,
         }
-
-        filtered_payload = {k: v for k, v in payload_data.items() if v is not None}
-        return self._make_request("createInvoiceLink", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "createInvoiceLink", method="POST", data=payload_data
+        )
+        return str(response)
 
     def answer_shipping_query(
         self,
         shipping_query_id: str,
         ok: bool,
-        shipping_options: Optional[List[Dict[str, Any]]] = None,
-        error_message: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        shipping_options: Optional[ShippingOption] = None,
+        error_message: str | None = None,
+    ) -> bool:
         """
         Reply to a shipping query.
 
@@ -5639,25 +5004,26 @@ class Telegram:
         """
         if ok and not shipping_options:
             raise ValueError("shipping_options are required when ok is True.")
+
         if not ok and not error_message:
             raise ValueError("error_message is required when ok is False.")
 
         payload = {
             "shipping_query_id": shipping_query_id,
             "ok": ok,
-            "shipping_options": json.dumps(shipping_options) if shipping_options is not None else None,
+            "shipping_options": json.dumps(shipping_options)
+            if shipping_options is not None
+            else None,
             "error_message": error_message,
         }
-
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("answerShippingQuery", method="POST", data=filtered_payload)
+        response = self._make_request(
+            "answerShippingQuery", method="POST", data=payload
+        )
+        return bool(response)
 
     def answer_pre_checkout_query(
-        self,
-        pre_checkout_query_id: str,
-        ok: bool,
-        error_message: Optional[str] = None
-    ) -> Dict[Any, Any]:
+        self, pre_checkout_query_id: str, ok: bool, error_message: str | None = None
+    ) -> bool:
         """
         Respond to a pre-checkout query.
 
@@ -5680,11 +5046,12 @@ class Telegram:
             "ok": ok,
             "error_message": error_message,
         }
+        response = self._make_request(
+            "answerPreCheckoutQuery", method="POST", data=payload
+        )
+        return bool(response)
 
-        filtered_payload = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("answerPreCheckoutQuery", method="POST", data=filtered_payload)
-
-    def get_my_star_balance(self) -> Dict[Any, Any]:
+    def get_my_star_balance(self) -> StarAmount:
         """
         Get the current Telegram Stars balance of the bot.
 
@@ -5694,13 +5061,12 @@ class Telegram:
 
         :return: A StarAmount object containing the bot's current Telegram Stars balance.
         """
-        return self._make_request("getMyStarBalance", method="GET")
+        response = self._make_request("getMyStarBalance", method="GET")
+        return StarAmount.model_validate(response)
 
     def get_star_transactions(
-        self,
-        offset: Optional[int] = None,
-        limit: Optional[int] = None
-    ) -> Dict[Any, Any]:
+        self, offset: int | None = None, limit: int | None = None
+    ) -> StarTransactions:
         """
         Get the bot's Telegram Star transactions in chronological order.
 
@@ -5710,19 +5076,15 @@ class Telegram:
         :param limit: Maximum number of transactions to retrieve (1–100). Defaults to 100.
         :return: A StarTransactions object on success.
         """
-        payload = {
-            "offset": offset,
-            "limit": limit,
-        }
-
-        filtered_params = {k: v for k, v in payload.items() if v is not None}
-        return self._make_request("getStarTransactions", method="GET", params=filtered_params)
+        payload = {"offset": offset, "limit": limit}
+        response = self._make_request(
+            "getStarTransactions", method="GET", params=payload
+        )
+        return StarTransactions.model_validate(response)
 
     def refund_star_payment(
-        self,
-        user_id: int,
-        telegram_payment_charge_id: str
-    ) -> Dict[Any, Any]:
+        self, user_id: int, telegram_payment_charge_id: str
+    ) -> bool:
         """
         Refund a successful payment made in Telegram Stars.
 
@@ -5736,14 +5098,12 @@ class Telegram:
             "user_id": user_id,
             "telegram_payment_charge_id": telegram_payment_charge_id,
         }
-        return self._make_request("refundStarPayment", method="POST", data=payload)
+        response = self._make_request("refundStarPayment", method="POST", data=payload)
+        return bool(response)
 
     def edit_user_star_subscription(
-        self,
-        user_id: int,
-        telegram_payment_charge_id: str,
-        is_canceled: bool
-    ) -> Dict[Any, Any]:
+        self, user_id: int, telegram_payment_charge_id: str, is_canceled: bool
+    ) -> bool:
         """
         Cancel or re-enable the extension of a subscription paid in Telegram Stars.
 
@@ -5761,713 +5121,171 @@ class Telegram:
             "telegram_payment_charge_id": telegram_payment_charge_id,
             "is_canceled": is_canceled,
         }
-        return self._make_request("editUserStarSubscription", method="POST", data=payload)
-
-def create_shipping_query(
-    id: str,
-    from_user: Dict[str, Any],
-    invoice_payload: str,
-    shipping_address: Dict[str, Any]
-) -> Dict[str, Any]:
-    """
-    Create a ShippingQuery object.
-
-    This object contains information about an incoming shipping query.
-    It is sent when the user has selected a shipping address and a shipping option is needed.
-
-    :param id: Unique identifier for the query.
-    :param from_user: User who sent the query (User object).
-    :param invoice_payload: Bot-specified invoice payload (1-128 bytes). Used for internal tracking.
-    :param shipping_address: User's specified shipping address (ShippingAddress object).
-    :return: A dictionary representing a ShippingQuery object.
-    """
-    return {
-        "id": id,
-        "from": from_user,
-        "invoice_payload": invoice_payload,
-        "shipping_address": shipping_address,
-    }
-
-def create_pre_checkout_query(
-    id: str,
-    from_user: Dict[str, Any],
-    currency: str,
-    total_amount: int,
-    invoice_payload: str,
-    shipping_option_id: Optional[str] = None,
-    order_info: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    """
-    Create a PreCheckoutQuery object.
-
-    This object contains information about an incoming pre-checkout query.
-    It is sent after the user has reviewed the invoice and confirmed the shipping address (if applicable),
-    but before the actual payment is processed.
-
-    The bot must respond within 10 seconds using answerPreCheckoutQuery.
-
-    :param id: Unique identifier for the query.
-    :param from_user: User who sent the query (User object).
-    :param currency: Three-letter ISO 4217 currency code (e.g., 'USD') or 'XTR' for Telegram Stars.
-    :param total_amount: Total price in the smallest units of the currency (e.g., 145 for $1.45).
-    :param invoice_payload: Bot-specified invoice payload (1-128 bytes). Used for internal tracking.
-    :param shipping_option_id: Optional. Identifier of the shipping option chosen by the user.
-    :param order_info: Optional. Order information provided by the user (OrderInfo object).
-    :return: A dictionary representing a PreCheckoutQuery object.
-    """
-    query = {
-        "id": id,
-        "from": from_user,
-        "currency": currency,
-        "total_amount": total_amount,
-        "invoice_payload": invoice_payload,
-        "shipping_option_id": shipping_option_id,
-        "order_info": order_info,
-    }
-    return {k: v for k, v in query.items() if v is not None}
-
-def create_paid_media_purchased(
-    from_user: Dict[str, Any],
-    paid_media_payload: str
-) -> Dict[str, Any]:
-    """
-    Create a PaidMediaPurchased object.
-
-    This object contains information about a successful purchase of paid media.
-    It is received as part of an Update when a user buys access to media sent via sendPaidMedia.
-
-    :param from_user: User who purchased the media (User object).
-    :param paid_media_payload: Bot-specified paid media payload (0-128 bytes). Used for internal processes.
-    :return: A dictionary representing a PaidMediaPurchased object.
-    """
-    return {
-        "from": from_user,
-        "paid_media_payload": paid_media_payload,
-    }
-
-def create_revenue_withdrawal_state_pending() -> Dict[str, Any]:
-    """
-    Create a RevenueWithdrawalStatePending object.
-
-    Represents a revenue withdrawal operation that is currently in progress.
-
-    :return: A dictionary representing a RevenueWithdrawalStatePending object.
-    """
-    return {
-        "type": "pending"
-    }
-
-def create_revenue_withdrawal_state_succeeded(
-    date: int,
-    url: str
-) -> Dict[str, Any]:
-    """
-    Create a RevenueWithdrawalStateSucceeded object.
-
-    Represents a revenue withdrawal operation that has successfully completed.
-
-    :param date: Date the withdrawal was completed, in Unix time.
-    :param url: An HTTPS URL that can be used to view transaction details.
-    :return: A dictionary representing a RevenueWithdrawalStateSucceeded object.
-    """
-    return {
-        "type": "succeeded",
-        "date": date,
-        "url": url,
-    }
-
-def create_revenue_withdrawal_state_failed() -> Dict[str, Any]:
-    """
-    Create a RevenueWithdrawalStateFailed object.
-
-    Represents a revenue withdrawal operation that has failed and the transaction was refunded.
-
-    :return: A dictionary representing a RevenueWithdrawalStateFailed object.
-    """
-    return {
-        "type": "failed"
-    }
-
-def create_affiliate_info(
-    commission_per_mille: int,
-    amount: int,
-    affiliate_user: Optional[Dict[str, Any]] = None,
-    affiliate_chat: Optional[Dict[str, Any]] = None,
-    nanostar_amount: Optional[int] = None
-) -> Dict[str, Any]:
-    """
-    Create an AffiliateInfo object.
-
-    Contains information about an affiliate that received a commission via a transaction.
-
-    :param commission_per_mille: Number of Telegram Stars received by the affiliate for each 1000 Stars received by the bot.
-    :param amount: Integer amount of Telegram Stars received by the affiliate (rounded to 0; can be negative for refunds).
-    :param affiliate_user: Optional. The bot or user that received the commission.
-    :param affiliate_chat: Optional. The chat that received the commission.
-    :param nanostar_amount: Optional. Number of 1/1000000000 shares of Telegram Stars received by the affiliate.
-    :return: A dictionary representing an AffiliateInfo object.
-    """
-    info = {
-        "commission_per_mille": commission_per_mille,
-        "amount": amount,
-        "affiliate_user": affiliate_user,
-        "affiliate_chat": affiliate_chat,
-        "nanostar_amount": nanostar_amount,
-    }
-    return {k: v for k, v in info.items() if v is not None}
-
-def create_transaction_partner_user(
-    user: Dict[str, Any],
-    transaction_type: str,
-    affiliate: Optional[Dict[str, Any]] = None,
-    invoice_payload: Optional[str] = None,
-    subscription_period: Optional[int] = None,
-    paid_media: Optional[List[Dict[str, Any]]] = None,
-    paid_media_payload: Optional[str] = None,
-    gift: Optional[Dict[str, Any]] = None,
-    premium_subscription_duration: Optional[int] = None
-) -> Dict[str, Any]:
-    """
-    Create a TransactionPartnerUser object.
-
-    Describes a transaction with a user (e.g., an invoice payment, a gift purchase).
-
-    :param user: Information about the user.
-    :param transaction_type: Type of the transaction: 'invoice_payment', 'paid_media_payment', 'gift_purchase', 'premium_purchase', 'business_account_transfer'.
-    :param affiliate: Optional. Information about the affiliate that received a commission.
-    :param invoice_payload: Optional. Bot-specified invoice payload (for 'invoice_payment').
-    :param subscription_period: Optional. Duration of the paid subscription in seconds (for 'invoice_payment').
-    :param paid_media: Optional. Information about the paid media bought by the user (for 'paid_media_payment').
-    :param paid_media_payload: Optional. Bot-specified paid media payload (for 'paid_media_payment').
-    :param gift: Optional. The gift sent to the user by the bot (for 'gift_purchase').
-    :param premium_subscription_duration: Optional. Number of months the gifted Telegram Premium subscription is active for (for 'premium_purchase').
-    :return: A dictionary representing a TransactionPartnerUser object.
-    """
-    partner = {
-        "type": "user",
-        "user": user,
-        "transaction_type": transaction_type,
-        "affiliate": affiliate,
-        "invoice_payload": invoice_payload,
-        "subscription_period": subscription_period,
-        "paid_media": paid_media,
-        "paid_media_payload": paid_media_payload,
-        "gift": gift,
-        "premium_subscription_duration": premium_subscription_duration,
-    }
-    return {k: v for k, v in partner.items() if v is not None}
-
-def create_transaction_partner_chat(
-    chat: Dict[str, Any],
-    gift: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    """
-    Create a TransactionPartnerChat object.
-
-    Describes a transaction with a chat (e.g., sending a gift to a channel).
-
-    :param chat: Information about the chat.
-    :param gift: Optional. The gift sent to the chat by the bot.
-    :return: A dictionary representing a TransactionPartnerChat object.
-    """
-    partner = {
-        "type": "chat",
-        "chat": chat,
-        "gift": gift,
-    }
-    return {k: v for k, v in partner.items() if v is not None}
-
-def create_transaction_partner_affiliate_program(
-    sponsor_user: Optional[Dict[str, Any]],
-    commission_per_mille: int
-) -> Dict[str, Any]:
-    """
-    Create a TransactionPartnerAffiliateProgram object.
-
-    Describes the affiliate program that issued a commission received via a transaction.
-
-    :param sponsor_user: Optional. Information about the bot that sponsored the affiliate program.
-    :param commission_per_mille: Number of Telegram Stars received by the bot for each 1000 Stars received by the affiliate sponsor.
-    :return: A dictionary representing a TransactionPartnerAffiliateProgram object.
-    """
-    return {
-        "type": "affiliate_program",
-        "sponsor_user": sponsor_user,
-        "commission_per_mille": commission_per_mille,
-    }
-
-def create_transaction_partner_fragment(
-    withdrawal_state: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    """
-    Create a TransactionPartnerFragment object.
-
-    Describes a withdrawal transaction with Fragment.
-
-    :param withdrawal_state: Optional. State of the outgoing withdrawal transaction.
-    :return: A dictionary representing a TransactionPartnerFragment object.
-    """
-    return {
-        "type": "fragment",
-        "withdrawal_state": withdrawal_state,
-    }
-
-def create_transaction_partner_telegram_ads() -> Dict[str, Any]:
-    """
-    Create a TransactionPartnerTelegramAds object.
-
-    Describes a withdrawal transaction to the Telegram Ads platform.
-
-    :return: A dictionary representing a TransactionPartnerTelegramAds object.
-    """
-    return {
-        "type": "telegram_ads"
-    }
-
-def create_transaction_partner_telegram_api(
-    request_count: int
-) -> Dict[str, Any]:
-    """
-    Create a TransactionPartnerTelegramApi object.
-
-    Describes a transaction with payment for paid broadcasting.
-
-    :param request_count: The number of successful requests that exceeded regular limits and were billed.
-    :return: A dictionary representing a TransactionPartnerTelegramApi object.
-    """
-    return {
-        "type": "telegram_api",
-        "request_count": request_count,
-    }
-
-def create_transaction_partner_other() -> Dict[str, Any]:
-    """
-    Create a TransactionPartnerOther object.
-
-    Describes a transaction with an unknown source or recipient.
-
-    :return: A dictionary representing a TransactionPartnerOther object.
-    """
-    return {
-        "type": "other"
-    }
-
-def create_star_transaction(
-    id: str,
-    amount: int,
-    date: int,
-    nanostar_amount: Optional[int] = None,
-    source: Optional[Dict[str, Any]] = None,
-    receiver: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    """
-    Create a StarTransaction object.
-
-    Describes a Telegram Star transaction (e.g., a payment from a user, a withdrawal).
-
-    :param id: Unique identifier of the transaction.
-    :param amount: Integer amount of Telegram Stars transferred.
-    :param date: Date the transaction was created, in Unix time.
-    :param nanostar_amount: Optional. Number of 1/1000000000 shares of Telegram Stars transferred.
-    :param source: Optional. Source of the transaction (for incoming transactions).
-    :param receiver: Optional. Receiver of the transaction (for outgoing transactions).
-    :return: A dictionary representing a StarTransaction object.
-    """
-    transaction = {
-        "id": id,
-        "amount": amount,
-        "date": date,
-        "nanostar_amount": nanostar_amount,
-        "source": source,
-        "receiver": receiver,
-    }
-    return {k: v for k, v in transaction.items() if v is not None}
-
-def create_star_transactions(
-    transactions: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """
-    Create a StarTransactions object.
-
-    Contains a list of Telegram Star transactions.
-
-    :param transactions: The list of StarTransaction objects.
-    :return: A dictionary representing a StarTransactions object.
-    """
-    return {
-        "transactions": transactions
-    }
-
-def create_passport_data(
-    data: List[Dict[str, Any]],
-    credentials: Dict[str, Any]
-) -> Dict[str, Any]:
-    """
-    Create a PassportData object.
-
-    Describes Telegram Passport data shared with the bot by the user.
-
-    :param data: Array of EncryptedPassportElement objects.
-    :param credentials: EncryptedCredentials object required to decrypt the data.
-    :return: A dictionary representing a PassportData object.
-    """
-    return {
-        "data": data,
-        "credentials": credentials,
-    }
-
-def create_passport_file(
-    file_id: str,
-    file_unique_id: str,
-    file_size: int,
-    file_date: int
-) -> Dict[str, Any]:
-    """
-    Create a PassportFile object.
-
-    Represents a file uploaded to Telegram Passport.
-
-    :param file_id: Identifier for the file.
-    :param file_unique_id: Unique identifier for the file.
-    :param file_size: File size in bytes.
-    :param file_date: Unix time when the file was uploaded.
-    :return: A dictionary representing a PassportFile object.
-    """
-    return {
-        "file_id": file_id,
-        "file_unique_id": file_unique_id,
-        "file_size": file_size,
-        "file_date": file_date,
-    }
-
-def create_encrypted_passport_element(
-    type: str,
-    data: Optional[str] = None,
-    phone_number: Optional[str] = None,
-    email: Optional[str] = None,
-    files: Optional[List[Dict[str, Any]]] = None,
-    front_side: Optional[Dict[str, Any]] = None,
-    reverse_side: Optional[Dict[str, Any]] = None,
-    selfie: Optional[Dict[str, Any]] = None,
-    translation: Optional[List[Dict[str, Any]]] = None,
-    hash: str = None
-) -> Dict[str, Any]:
-    """
-    Create an EncryptedPassportElement object.
-
-    Describes a document or other element shared with the bot via Telegram Passport.
-
-    :param type: Element type: 'personal_details', 'passport', 'driver_license', etc.
-    :param data: Optional. Base64-encoded encrypted data (for certain types).
-    :param phone_number: Optional. Verified phone number (for 'phone_number' type).
-    :param email: Optional. Verified email address (for 'email' type).
-    :param files: Optional. Array of encrypted files (for certain types).
-    :param front_side: Optional. Encrypted file with the front side of a document.
-    :param reverse_side: Optional. Encrypted file with the reverse side of a document.
-    :param selfie: Optional. Encrypted file with a user's selfie holding a document.
-    :param translation: Optional. Array of encrypted files with translated versions of documents.
-    :param hash: Base64-encoded element hash for error reporting.
-    :return: A dictionary representing an EncryptedPassportElement object.
-    """
-    element = {
-        "type": type,
-        "data": data,
-        "phone_number": phone_number,
-        "email": email,
-        "files": files,
-        "front_side": front_side,
-        "reverse_side": reverse_side,
-        "selfie": selfie,
-        "translation": translation,
-        "hash": hash,
-    }
-    return {k: v for k, v in element.items() if v is not None}
-
-def create_encrypted_credentials(
-    data: str,
-    hash: str,
-    secret: str
-) -> Dict[str, Any]:
-    """
-    Create an EncryptedCredentials object.
-
-    Describes data required for decrypting and authenticating EncryptedPassportElement.
-
-    :param data: Base64-encoded encrypted JSON-serialized data.
-    :param hash: Base64-encoded data hash for authentication.
-    :param secret: Base64-encoded secret, encrypted with the bot's public key.
-    :return: A dictionary representing an EncryptedCredentials object.
-    """
-    return {
-        "data": data,
-        "hash": hash,
-        "secret": secret,
-    }
-
-def set_passport_data_errors(
-    self,
-    user_id: int,
-    errors: List[Dict[str, Any]]
-) -> Dict[Any, Any]:
-    """
-    Inform a user that some of the data they provided in Telegram Passport contains errors.
-    The user will not be able to re-submit until the errors are fixed.
-
-    Use this method if the submitted data doesn't meet your service's requirements
-    (e.g., invalid date, blurry document, evidence of tampering).
-
-    Returns True on success.
-
-    :param user_id: Unique identifier of the target user.
-    :param errors: A list of PassportElementError objects describing the errors.
-    :return: True on success.
-    """
-    payload = {
-        "user_id": user_id,
-        "errors": json.dumps(errors),
-    }
-    return self._make_request("setPassportDataErrors", method="POST", data=payload)
-
-def create_passport_element_error_data_field(
-    type: str,
-    field_name: str,
-    data_hash: str,
-    message: str
-) -> Dict[str, Any]:
-    """
-    Create a PassportElementErrorDataField object.
-
-    Represents an issue in a data field provided by the user (e.g., invalid name or date).
-    The error is resolved when the field's value changes.
-
-    :param type: The section of Telegram Passport with the error: 'personal_details', 'passport', etc.
-    :param field_name: Name of the data field which has the error.
-    :param data_hash: Base64-encoded data hash.
-    :param message: Error message shown to the user.
-    :return: A dictionary representing a PassportElementErrorDataField object.
-    """
-    return {
-        "source": "data",
-        "type": type,
-        "field_name": field_name,
-        "data_hash": data_hash,
-        "message": message,
-    }
-
-def create_passport_element_error_front_side(
-    type: str,
-    file_hash: str,
-    message: str
-) -> Dict[str, Any]:
-    """
-    Create a PassportElementErrorFrontSide object.
-
-    Represents an issue with the front side of a document (e.g., blurry photo).
-    The error is resolved when the file changes.
-
-    :param type: The section of Telegram Passport with the issue: 'passport', 'driver_license', etc.
-    :param file_hash: Base64-encoded hash of the file.
-    :param message: Error message shown to the user.
-    :return: A dictionary representing a PassportElementErrorFrontSide object.
-    """
-    return {
-        "source": "front_side",
-        "type": type,
-        "file_hash": file_hash,
-        "message": message,
-    }
-
-def send_game(
-    self,
-    chat_id: int,
-    game_short_name: str,
-    business_connection_id: Optional[str] = None,
-    message_thread_id: Optional[int] = None,
-    disable_notification: Optional[bool] = None,
-    protect_content: Optional[bool] = None,
-    allow_paid_broadcast: Optional[bool] = None,
-    message_effect_id: Optional[str] = None,
-    reply_parameters: Optional[ReplyParameters] = None,
-    reply_markup: Optional[InlineKeyboardMarkup] = None
-) -> Dict[Any, Any]:
-    """
-    Send a game to a user.
-
-    On success, the sent Message is returned.
-
-    :param chat_id: Unique identifier for the target chat. 
-                    Games cannot be sent to channel direct messages or channel chats.
-    :param game_short_name: Short name of the game, serves as the unique identifier.
-                            Games must be created and configured via @BotFather.
-    :param business_connection_id: Unique identifier of the business connection on behalf of which the message is sent.
-    :param message_thread_id: Unique identifier for the target message thread (topic) in a forum; for forum supergroups only.
-    :param disable_notification: Send the message silently (no notification sound).
-    :param protect_content: Protect the message from forwarding and saving.
-    :param allow_paid_broadcast: Allow up to 1000 messages/sec for 0.1 Stars per message.
-    :param message_effect_id: Unique identifier of a message effect to be added (private chats only).
-    :param reply_parameters: Description of the message to reply to.
-    :param reply_markup: Inline keyboard. If empty, a default 'Play [game_title]' button is shown.
-                         The first button must be a game launch button if reply_markup is provided.
-    :return: The sent Message object on success.
-    """
-    payload = {
-        "chat_id": chat_id,
-        "business_connection_id": business_connection_id,
-        "message_thread_id": message_thread_id,
-        "game_short_name": game_short_name,
-        "disable_notification": disable_notification,
-        "protect_content": protect_content,
-        "allow_paid_broadcast": allow_paid_broadcast,
-        "message_effect_id": message_effect_id,
-        "reply_parameters": reply_parameters,
-        "reply_markup": reply_markup,
-    }
-
-    filtered_payload = {k: v for k, v in payload.items() if v is not None}
-    return self._make_request("sendGame", method="POST", data=filtered_payload)
-
-def create_game(
-    title: str,
-    description: str,
-    photo: List[Dict[str, Any]],
-    text: Optional[str] = None,
-    text_entities: Optional[List[MessageEntity]] = None,
-    animation: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    """
-    Create a Game object.
-
-    Represents a game configured via @BotFather.
-
-    :param title: Title of the game.
-    :param description: Description of the game.
-    :param photo: Array of PhotoSize objects representing the photo that will be displayed in the game message.
-    :param text: Optional. Brief description of the game or high scores. Can be up to 4096 characters.
-                 This text can be automatically updated by the bot using setGameScore or manually edited.
-    :param text_entities: Optional. List of special entities (like usernames, URLs, commands) that appear in the text.
-    :param animation: Optional. Animation (GIF or H.264/MPEG-4 AVC video without sound) to be displayed in the game message.
-                      Must be uploaded via @BotFather.
-    :return: A dictionary representing a Game object.
-    """
-    game = {
-        "title": title,
-        "description": description,
-        "photo": photo,
-        "text": text,
-        "text_entities": text_entities,
-        "animation": animation,
-    }
-    return {k: v for k, v in game.items() if v is not None}
-
-def create_callback_game() -> Dict[str, Any]:
-    """
-    Create a CallbackGame object.
-
-    A placeholder object that currently holds no information.
-    Used as a type of InlineKeyboardButton to launch a game.
-
-    Use @BotFather to set up your game.
-
-    :return: An empty dictionary representing a CallbackGame object.
-    """
-    return {}
-
-def set_game_score(
-    self,
-    user_id: int,
-    score: int,
-    force: Optional[bool] = None,
-    disable_edit_message: Optional[bool] = None,
-    chat_id: Optional[int] = None,
-    message_id: Optional[int] = None,
-    inline_message_id: Optional[str] = None
-) -> Dict[Any, Any]:
-    """
-    Set the score of a specified user in a game message.
-
-    On success, if the message is not an inline message, the Message is returned; otherwise, True is returned.
-
-    Returns an error if the new score is not greater than the user's current score in the chat and `force` is False.
-
-    :param user_id: User identifier.
-    :param score: New score for the user. Must be non-negative.
-    :param force: Pass True if the high score is allowed to decrease.
-                  Useful for fixing mistakes or banning cheaters.
-    :param disable_edit_message: Pass True if the game message should not be automatically edited to include the current scoreboard.
-    :param chat_id: Required if inline_message_id is not specified. Unique identifier for the target chat.
-    :param message_id: Required if inline_message_id is not specified. Identifier of the sent message.
-    :param inline_message_id: Required if chat_id and message_id are not specified. Identifier of the inline message.
-    :return: The edited Message object if not an inline message, otherwise True on success.
-    """
-    if not (chat_id and message_id) and not inline_message_id:
-        raise ValueError("Either (chat_id and message_id) or inline_message_id must be provided.")
-
-    payload = {
-        "user_id": user_id,
-        "score": score,
-        "force": force,
-        "disable_edit_message": disable_edit_message,
-        "chat_id": chat_id,
-        "message_id": message_id,
-        "inline_message_id": inline_message_id,
-    }
-
-    filtered_payload = {k: v for k, v in payload.items() if v is not None}
-    return self._make_request("setGameScore", method="POST", data=filtered_payload)
-
-def get_game_high_scores(
-    self,
-    user_id: int,
-    chat_id: Optional[int] = None,
-    message_id: Optional[int] = None,
-    inline_message_id: Optional[str] = None
-) -> Dict[Any, Any]:
-    """
-    Get data for high score tables.
-
-    Returns an array of GameHighScore objects.
-
-    This method returns the score of the specified user and several of their neighbors in the game.
-    Currently, it returns the target user's score plus two closest neighbors on each side.
-    It also returns the top three users if the user and their neighbors are not among them.
-    Note: This behavior is subject to change.
-
-    :param user_id: Target user's unique identifier.
-    :param chat_id: Required if inline_message_id is not specified. Unique identifier for the target chat.
-    :param message_id: Required if inline_message_id is not specified. Identifier of the sent message.
-    :param inline_message_id: Required if chat_id and message_id are not specified. Identifier of the inline message.
-    :return: An Array of GameHighScore objects on success.
-    """
-    if not (chat_id and message_id) and not inline_message_id:
-        raise ValueError("Either (chat_id and message_id) or inline_message_id must be provided.")
-
-    payload = {
-        "user_id": user_id,
-        "chat_id": chat_id,
-        "message_id": message_id,
-        "inline_message_id": inline_message_id,
-    }
-
-    filtered_params = {k: v for k, v in payload.items() if v is not None}
-    return self._make_request("getGameHighScores", method="GET", params=filtered_params)
-
-def create_game_high_score(
-    position: int,
-    user: Dict[str, Any],
-    score: int
-) -> Dict[str, Any]:
-    """
-    Create a GameHighScore object.
-
-    Represents one row in the high scores table for a game.
-
-    :param position: Position in the high score table.
-    :param user: User object representing the player.
-    :param score: The player's score.
-    :return: A dictionary representing a GameHighScore object.
-    """
-    return {
-        "position": position,
-        "user": user,
-        "score": score,
-    }
+        response = self._make_request(
+            "editUserStarSubscription", method="POST", data=payload
+        )
+        return bool(response)
+
+    def set_passport_data_errors(
+        self, user_id: int, errors: List[PassportElementError]
+    ) -> bool:
+        """
+        Inform a user that some of the data they provided in Telegram Passport contains errors.
+        The user will not be able to re-submit until the errors are fixed.
+
+        Use this method if the submitted data doesn't meet your service's requirements
+        (e.g., invalid date, blurry document, evidence of tampering).
+
+        Returns True on success.
+
+        :param user_id: Unique identifier of the target user.
+        :param errors: A list of PassportElementError objects describing the errors.
+        :return: True on success.
+        """
+        payload = {
+            "user_id": user_id,
+            "errors": json.dumps(errors),
+        }
+        response = self._make_request(
+            "setPassportDataErrors", method="POST", data=payload
+        )
+        return bool(response)
+
+    def send_game(
+        self,
+        chat_id: int,
+        game_short_name: str,
+        business_connection_id: str | None = None,
+        message_thread_id: int | None = None,
+        disable_notification: bool | None = None,
+        protect_content: bool | None = None,
+        allow_paid_broadcast: bool | None = None,
+        message_effect_id: str | None = None,
+        reply_parameters: ReplyParameters | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Message:
+        """
+        Send a game to a user.
+
+        On success, the sent Message is returned.
+
+        :param chat_id: Unique identifier for the target chat.
+                        Games cannot be sent to channel direct messages or channel chats.
+        :param game_short_name: Short name of the game, serves as the unique identifier.
+                                Games must be created and configured via @BotFather.
+        :param business_connection_id: Unique identifier of the business connection on behalf of which the message is sent.
+        :param message_thread_id: Unique identifier for the target message thread (topic) in a forum; for forum supergroups only.
+        :param disable_notification: Send the message silently (no notification sound).
+        :param protect_content: Protect the message from forwarding and saving.
+        :param allow_paid_broadcast: Allow up to 1000 messages/sec for 0.1 Stars per message.
+        :param message_effect_id: Unique identifier of a message effect to be added (private chats only).
+        :param reply_parameters: Description of the message to reply to.
+        :param reply_markup: Inline keyboard. If empty, a default 'Play [game_title]' button is shown.
+                            The first button must be a game launch button if reply_markup is provided.
+        :return: The sent Message object on success.
+        """
+        payload = {
+            "chat_id": chat_id,
+            "business_connection_id": business_connection_id,
+            "message_thread_id": message_thread_id,
+            "game_short_name": game_short_name,
+            "disable_notification": disable_notification,
+            "protect_content": protect_content,
+            "allow_paid_broadcast": allow_paid_broadcast,
+            "message_effect_id": message_effect_id,
+            "reply_parameters": reply_parameters,
+            "reply_markup": reply_markup,
+        }
+        response = self._make_request("sendGame", method="POST", data=payload)
+        return Message.model_validate(response)
+
+    def set_game_score(
+        self,
+        user_id: int,
+        score: int,
+        force: bool | None = None,
+        disable_edit_message: bool | None = None,
+        chat_id: int | None = None,
+        message_id: int | None = None,
+        inline_message_id: str | None = None,
+    ) -> Message | bool:
+        """
+        Set the score of a specified user in a game message.
+
+        On success, if the message is not an inline message, the Message is returned; otherwise, True is returned.
+
+        Returns an error if the new score is not greater than the user's current score in the chat and `force` is False.
+
+        :param user_id: User identifier.
+        :param score: New score for the user. Must be non-negative.
+        :param force: Pass True if the high score is allowed to decrease.
+                    Useful for fixing mistakes or banning cheaters.
+        :param disable_edit_message: Pass True if the game message should not be automatically edited to include the current scoreboard.
+        :param chat_id: Required if inline_message_id is not specified. Unique identifier for the target chat.
+        :param message_id: Required if inline_message_id is not specified. Identifier of the sent message.
+        :param inline_message_id: Required if chat_id and message_id are not specified. Identifier of the inline message.
+        :return: The edited Message object if not an inline message, otherwise True on success.
+        """
+        if not (chat_id and message_id) and not inline_message_id:
+            raise ValueError(
+                "Either (chat_id and message_id) or inline_message_id must be provided."
+            )
+
+        payload = {
+            "user_id": user_id,
+            "score": score,
+            "force": force,
+            "disable_edit_message": disable_edit_message,
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "inline_message_id": inline_message_id,
+        }
+        response = self._make_request("setGameScore", method="POST", data=payload)
+        if isinstance(response, bool):
+            return bool(response)
+
+        return Message.model_validate(response)
+
+    def get_game_high_scores(
+        self,
+        user_id: int,
+        chat_id: int | None = None,
+        message_id: int | None = None,
+        inline_message_id: str | None = None,
+    ) -> List[GameHighScore]:
+        """
+        Get data for high score tables.
+
+        Returns an array of GameHighScore objects.
+
+        This method returns the score of the specified user and several of their neighbors in the game.
+        Currently, it returns the target user's score plus two closest neighbors on each side.
+        It also returns the top three users if the user and their neighbors are not among them.
+        Note: This behavior is subject to change.
+
+        :param user_id: Target user's unique identifier.
+        :param chat_id: Required if inline_message_id is not specified. Unique identifier for the target chat.
+        :param message_id: Required if inline_message_id is not specified. Identifier of the sent message.
+        :param inline_message_id: Required if chat_id and message_id are not specified. Identifier of the inline message.
+        :return: An Array of GameHighScore objects on success.
+        """
+        if not (chat_id and message_id) and not inline_message_id:
+            raise ValueError(
+                "Either (chat_id and message_id) or inline_message_id must be provided."
+            )
+
+        payload = {
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "inline_message_id": inline_message_id,
+        }
+        response = self._make_request("getGameHighScores", method="GET", params=payload)
+        return [GameHighScore.model_validate(game) for game in response]
+
+    def is_join_channel(self, chat_id, user_id, **kwargs):
+        if chat_id.isnumeric():
+            chat_id = chat_id if "@" in chat_id else "@" + str(chat_id)
+
+        rsp = self.get_chat_member(chat_id, user_id)
+        return rsp.status != "left"
